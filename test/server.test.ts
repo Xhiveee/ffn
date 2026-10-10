@@ -105,14 +105,10 @@ describe("MCP server", () => {
     expect(r.isError).toBe(true);
   });
 
-  it("stubs answer with a clear not-implemented message", async () => {
-    for (const s of STUBS) {
-      const tool = (await client.listTools()).tools.find((t) => t.name === s.name)!;
-      expect(tool.description).toMatch(/NOT IMPLEMENTED YET/);
-    }
-    expect(STUBS.map((s) => s.name).sort()).toEqual(["mixin_port", "port_mod"]);
-    const r = await client.callTool({ name: "port_mod", arguments: { projectDir: "/nonexistent", toMcVersion: "26.3" } });
+  it("all milestone tools are implemented (no stubs left)", async () => {
+    expect(STUBS).toEqual([]);
+    const r = await client.callTool({ name: "port_mod", arguments: { projectDir: "/nonexistent", targetDir: "/tmp/ffn-x", toMcVersion: "26.3" } });
     expect(r.isError).toBe(true);
-    expect(text(r)).toMatch(/not implemented yet/);
+    expect(text(r)).not.toMatch(/not implemented yet/);
   });
 });

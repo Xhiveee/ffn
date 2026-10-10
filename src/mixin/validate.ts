@@ -20,7 +20,7 @@ export interface MixinIssue {
   mixin?: string;
   suggestion?: string;
   /** Set when a member could not be found (lets callers look the name up in other mappings). */
-  missing?: { owner: string; name: string; kind: "method" | "field" };
+  missing?: { owner: string; name: string; kind: "method" | "field" | "class" };
 }
 
 export interface ValidateContext {
@@ -77,7 +77,7 @@ export function parseSelector(sel: string): Selector {
 const nameMatches = (pattern: string, name: string) =>
   pattern.includes("*") ? new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(name) : pattern === name;
 
-function similar(name: string, candidates: string[], max = 6): string[] {
+export function similar(name: string, candidates: string[], max = 6): string[] {
   const l = name.toLowerCase();
   const dist = (a: string, b: string) => {
     const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
@@ -222,7 +222,7 @@ export class MixinValidator {
         }
       } else if (isMcLike(t)) {
         const sugg = this.ctx.index.search(t.slice(t.lastIndexOf("/") + 1), "class", 5).map((h) => h.name.replace(/\//g, "."));
-        push({ severity: "error", message: `Target class ${t.replace(/\//g, ".")} does not exist in Minecraft ${this.ctx.index.meta.mcVersion} (${this.ctx.index.meta.namespace} names).`, suggestion: sugg.length ? `Similar: ${sugg.join(", ")}` : undefined });
+        push({ severity: "error", missing: { owner: t, name: t, kind: "class" }, message: `Target class ${t.replace(/\//g, ".")} does not exist in Minecraft ${this.ctx.index.meta.mcVersion} (${this.ctx.index.meta.namespace} names).`, suggestion: sugg.length ? `Similar: ${sugg.join(", ")}` : undefined });
       } else {
         push({ severity: "info", message: `Target ${t.replace(/\//g, ".")} is not a Minecraft class; FFN cannot verify members on it${this.ctx.vanillaForLoader ? " (use source=project to include loader classes)" : ""}.` });
       }
@@ -357,7 +357,7 @@ export class MixinValidator {
         }
         const sel = parseSelector(target);
         if (sel.owner && isMcLike(sel.owner) && !this.ctx.index.classes.has(sel.owner)) {
-          push({ severity: "error", message: `@${ann} ${handler}: @At target owner ${sel.owner.replace(/\//g, ".")} does not exist.` });
+          push({ severity: "error", missing: { owner: sel.owner, name: sel.owner, kind: "class" }, message: `@${ann} ${handler}: @At target owner ${sel.owner.replace(/\//g, ".")} does not exist.` });
           return undefined;
         }
         let found = false;
@@ -375,8 +375,10 @@ export class MixinValidator {
         }
         if (analyzed && !found) {
           const lambdas = this.lambdaCallers(methods, sel);
+          const ownerHas = sel.owner && this.ctx.index.classes.has(sel.owner) ? this.ctx.index.hierarchy(sel.owner).some((h) => h.m.some(([n]) => n === sel.name)) : true;
           push({
             severity: "error",
+            ...(ownerHas ? {} : { missing: { owner: sel.owner!, name: sel.name, kind: "method" as const } }),
             message: `@${ann} ${handler}: ${where} never calls ${target}.`,
             suggestion: lambdas.length
               ? `The call is inside a lambda: target method ${lambdas.join(" or ")} instead.`
