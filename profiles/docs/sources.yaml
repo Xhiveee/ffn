@@ -6,6 +6,10 @@
 # files[].match is a regex on the repository path; `$1..$9` refer to its groups in `version` and `url`.
 # version: "latest" (newest docs, used for versions newer than every numbered set), a version ("1.21.1"), or a
 #          wildcard ("1.21.x" matches 1.21, 1.21.1 ...). versionFromContent: regex whose group 1 is the version.
+# topics: [mixin] tags every page of a source; files[].topics tags only the pages of that rule. docs_search topic=… filters.
+# versioned: false for docs that are not tied to Minecraft versions (Mixin wikis): always searched, version "any".
+# Fetch with exactly one of: zip, githubTree, git (shallow clone, e.g. a GitHub wiki), dokuwiki (sitemap + export_raw).
+# {page:url} is {page} with percent-encoded path segments (GitHub wiki names can contain ? , ').
 # kind: docs | primer (vanilla+loader changes for porting TO that version) | changelog (release announcements).
 # url: page template; `{page}` is the path without extension and without a trailing /index (or README).
 sources:
@@ -36,6 +40,16 @@ sources:
     loaders: [fabric]
     githubTree: { repo: FabricMC/fabric-docs, branch: main }
     files:
+      # mixin pages first (first matching rule wins) so they carry topic: mixin
+      - match: '^develop/(mixins/.+)\.md$'
+        version: latest
+        url: 'https://docs.fabricmc.net/develop/{page}'
+        topics: [mixin]
+      - match: '^versions/([^/]+)/develop/(mixins/.+)\.md$'
+        version: '$1'
+        url: 'https://docs.fabricmc.net/$1/develop/{page}'
+        fallbackUrl: 'https://github.com/FabricMC/fabric-docs/blob/main/versions/$1/develop/$2.md'
+        topics: [mixin]
       - match: '^develop/(.+)\.md$'
         version: latest
         url: 'https://docs.fabricmc.net/develop/{page}'
@@ -78,3 +92,37 @@ sources:
       - match: '^docs/(.+)\.md$'
         version: '1.20.1'
         url: 'https://docs.minecraftforge.net/en/1.20.1/{page}/'
+
+  # ---------------------------------------------------------------- Mixin (topic: mixin; not Minecraft-version-specific)
+  - id: mixin-wiki
+    title: SpongePowered Mixin wiki
+    loaders: [fabric, forge, neoforge]
+    topics: [mixin]
+    versioned: false
+    titleFromName: true
+    git: { url: 'https://github.com/SpongePowered/Mixin.wiki.git' }
+    files:
+      - match: '^([^_/][^/]*)\.md$'
+        url: 'https://github.com/SpongePowered/Mixin/wiki/{page:url}'
+
+  - id: mixinextras-wiki
+    title: MixinExtras wiki
+    loaders: [fabric, forge, neoforge]
+    topics: [mixin]
+    versioned: false
+    titleFromName: true
+    git: { url: 'https://github.com/LlamaLad7/MixinExtras.wiki.git' }
+    files:
+      - match: '^([^_/][^/]*)\.md$'
+        url: 'https://github.com/LlamaLad7/MixinExtras/wiki/{page:url}'
+
+  - id: fabric-wiki-mixin
+    title: Fabric wiki (Mixin tutorials)
+    loaders: [fabric]
+    topics: [mixin]
+    versioned: false
+    dokuwiki: { base: 'https://wiki.fabricmc.net' }
+    files:
+      # English tutorial pages only (no drafts:, no translations such as ru:tutorial:)
+      - match: '^tutorial:(mixin[a-z0-9_]*)$'
+        url: 'https://wiki.fabricmc.net/tutorial:{page}'

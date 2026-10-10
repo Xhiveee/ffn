@@ -1,0 +1,15 @@
+====== @Inject ======
+
+===== Effects & Use-Cases =====
+''@Inject'' injects a call to the handler at the chosen point; it can also return early by [[#cancelling|cancelling]].
+See ''[[https://github.com/LlamaLad7/MixinExtras/wiki/WrapOperation|@WrapOperation]]'' for wrapping single calls.
+
+==== Cancelling the target method ====
+FIXME //This section needs an example.//
+Set ''cancellable = true'' and call ''cancel()'' on the ''CallbackInfo''.\\
+<code java>
+@Inject(method = "tick", at = @At("HEAD"), cancellable = true)
+private void skipTick(CallbackInfo ci) {
+    ci.cancel();
+}
+</code>

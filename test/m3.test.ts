@@ -22,7 +22,7 @@ describe("docs_search helpers", () => {
     const md = parseMarkdown("---\ntitle: Blocks\n---\n# Blocks\nintro\n## Registering Blocks {#reg}\nUse DeferredRegister.\n```java\nBLOCKS.register(...)\n```\n## Other\nnothing");
     expect(md.frontTitle).toBe("Blocks");
     expect(md.sections.find((s) => s.anchor === "reg")?.code[0]).toContain("BLOCKS.register");
-    const page: DocPage = { sourceId: "s", sourceTitle: "S", kind: "docs", version: "latest", repoPath: "x", url: "u", title: "Blocks", sections: md.sections };
+    const page: DocPage = { sourceId: "s", sourceTitle: "S", kind: "docs", version: "latest", topics: [], repoPath: "x", url: "u", title: "Blocks", sections: md.sections };
     expect(rank([page], "register block", () => 1)[0]?.section.anchor).toBe("reg");
   });
 });

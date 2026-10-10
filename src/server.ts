@@ -11,7 +11,7 @@ import { registerDocsTools } from "./tools/docs.js";
 import { registerCheckProfiles } from "./tools/checkProfiles.js";
 
 export const SERVER_NAME = "ffn";
-export const SERVER_VERSION = "0.5.0";
+export const SERVER_VERSION = "0.6.0";
 
 const INSTRUCTIONS = `FFN (ForgeFabricNeoForge) gives you the real Minecraft and loader classes, mappings, docs and build tooling for Forge, Fabric and NeoForge (Minecraft 1.20.1 → latest).
 - Never guess versions: call list_versions (live data) and get_profile before writing build files.
@@ -21,6 +21,8 @@ const INSTRUCTIONS = `FFN (ForgeFabricNeoForge) gives you the real Minecraft and
 - Prefer loader events/APIs over mixins: mixin_targets prints event hints first. When a mixin is needed, take selectors
   from get_class / mixin_targets (name(descriptor) is the selector) and check your mixin with mixin_validate.
 - Use translate_mapping instead of guessing names across Mojmap/Yarn/Intermediary/SRG; docs_search for loader docs and version primers.
+- For Mixin questions (injectors, @At, MixinExtras like @WrapOperation, cancellable @Inject) use docs_search topic="mixin":
+  Mixin wiki, MixinExtras wiki and Fabric's mixin pages (not tied to a Minecraft version).
 - create_project generates a buildable project; build it with gradle_build (FFN picks the JDK and parses errors).
 - analyze_crash explains a crash report or log (from running the game yourself) and names the culprit mod.
 - Warnings marked UNVERIFIED mean the version is newer than FFN's tested profiles: build and verify.`;

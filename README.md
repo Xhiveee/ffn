@@ -16,7 +16,7 @@ It is designed so that **new Minecraft versions need no code changes**:
   rules. A version newer than anything verified resolves to the closest lower rules and is flagged
   `UNVERIFIED`. Users can add or override rules in a config directory — no rebuild needed.
 
-> Status: **0.5.0 (token economy; `generate` / `mixin_generate` removed)**.
+> Status: **0.6.0 (Mixin docs in `docs_search`; `run_client` / `run_server` removed)**.
 > FFN focuses on giving an AI agent accurate Minecraft/loader sources and APIs with small, paged outputs (see [Token economy](#token-economy)).
 
 ---
@@ -35,7 +35,7 @@ It is designed so that **new Minecraft versions need no code changes**:
 | `translate_mapping` | ✅ | Class/method/field names across Mojmap ↔ Yarn ↔ Intermediary ↔ SRG ↔ obfuscated (identity on unobfuscated 26.x+) |
 | `mixin_targets` | ✅ | **Loader event hints first**, then the class's method selectors (paged). With `methodFilter` (≤3 matches) or `injectionPoints: true`: concise injection points from bytecode (`HEAD \| RETURN ×n \| TAIL`, INVOKE/FIELD/NEW/CONSTANT targets deduped, `maxPoints` per kind, lambdas) |
 | `mixin_validate` | ✅ | Checks mixin configs and classes against the real game classes (see below) |
-| `docs_search` | ✅ | Searches the official Fabric/Forge/NeoForge docs, the NeoForged version primers and Fabric's per-version announcements for the project's version; cached; returns snippets, code and URLs that were checked to exist |
+| `docs_search` | ✅ | Searches the official Fabric/Forge/NeoForge docs, the NeoForged version primers, Fabric's per-version announcements and **Mixin docs** (SpongePowered Mixin wiki, MixinExtras wiki, Fabric mixin docs/wiki pages; `topic: "mixin"` searches only those). Version-aware for loader docs; cached; returns short snippets, code and URLs that were checked to exist |
 | `check_profiles` | ✅ | Compares the profiles with the official Fabric example mod, NeoForge/Forge MDKs, Gradle and plugin metadata, and with Minecraft releases newer than `testedUpTo`; reports outdated/unverified items and suggests user-profile YAML patches (never applied) |
 
 ## Install
@@ -172,12 +172,37 @@ Sources are declared in `profiles/docs/sources.yaml`:
 | Fabric docs (latest + versioned) | `FabricMC/fabric-docs` (git tree + raw files) | `docs.fabricmc.net/[version/]develop/…` (falls back to the GitHub file when the versioned page is not published) |
 | Fabric announcements ("Fabric for Minecraft X") | `FabricMC/fabricmc.net` `_posts` | `fabricmc.net/yyyy/mm/dd/<slug>.html` |
 | Forge docs 1.20.1 / 1.20.x / 1.21.x | `MinecraftForge/Documentation` branches (zip) | `docs.minecraftforge.net/en/<branch>/…` |
+| SpongePowered Mixin wiki (topic `mixin`, any version) | `SpongePowered/Mixin.wiki.git` (shallow `git clone`) | `github.com/SpongePowered/Mixin/wiki/<Page>` |
+| MixinExtras wiki (topic `mixin`, any version) | `LlamaLad7/MixinExtras.wiki.git` (shallow `git clone`) | `github.com/LlamaLad7/MixinExtras/wiki/<Page>` |
+| Fabric wiki Mixin tutorials (topic `mixin`, any version, Fabric) | `wiki.fabricmc.net` DokuWiki: `doku.php?do=sitemap` → English `tutorial:mixin*` pages → `?do=export_raw` | `wiki.fabricmc.net/tutorial:mixin_…` (DokuWiki section anchors) |
+| Fabric docs mixin pages (topic `mixin`, versioned) | the `develop/mixins/` pages of `FabricMC/fabric-docs` | `docs.fabricmc.net/[version/]develop/mixins/…` |
 
 Pages are cached under `<cache>/docs` (24 h, stale copy used when offline) and split into heading sections. Results are
 ranked with BM25 (camelCase identifiers are split). The doc set is chosen by version: exact or wildcard match, `latest` for
 versions newer than every numbered set, otherwise the closest set, with a note. Primers and announcements up to the target
 version are included, and closer versions rank higher. Every returned page URL is checked with HEAD/GET (cached) and is
 marked `[UNVERIFIED URL]` if the check fails. Set `GITHUB_TOKEN` if the GitHub API rate limit is a problem.
+
+**Topics and sources.** `topic: "mixin"` restricts the search to pages tagged `mixin` (a source's `topics`, or
+`files[].topics` for a subset such as Fabric's `develop/mixins/`); `sources: ["mixin-wiki", …]` restricts it to source
+ids. Mixin docs are **not tied to Minecraft versions** (`versioned: false`): they are always searched, are never
+version-filtered, and are shown without a version label. With a topic, the doc set of versioned sources is chosen among
+the pages that have that topic. Without a topic, Mixin wikis are still searched but rank slightly below loader docs.
+Wikis are fetched with `git` (must be installed; a stale clone is used offline or when the fetch fails).
+
+Example (`docs_search {query: "@Inject cancellable", topic: "mixin", limit: 2, includeCode: false}`, live):
+
+```
+2 result(s) for "@Inject cancellable" [topic mixin].
+Searched: Fabric documentation [latest]; SpongePowered Mixin wiki [any version]; MixinExtras wiki [any version]; Fabric wiki (Mixin tutorials) [any version].
+
+1. Cancellable — MixinExtras wiki
+   https://github.com/LlamaLad7/MixinExtras/wiki/Cancellable
+   Allows you to receive a cancellable `CallbackInfo` or `CallbackInfoReturnable` as appropriate from any kind of injector. …
+2. Advanced Mixin Usage - Callback Injectors › 3. Cancellable Injections — SpongePowered Mixin wiki
+   https://github.com/SpongePowered/Mixin/wiki/Advanced-Mixin-Usage---Callback-Injectors#3-cancellable-injections
+   So far, our injections haven't altered the structure of the target method at all, … **Cancellable Injections** allow…
+```
 
 ## Profile check (`check_profiles`)
 
@@ -305,6 +330,13 @@ Reproduce with `node scripts/gen-sample.mjs <dir> <loader> <mc>` and `scripts/bu
 | `mixin_validate` on a mixin with planted CONSTANT/JUMP/LOAD/@Slice mistakes → every mistake reported | ✅ |
 | `docs_search` live against all sources (NeoForge 26.3, Fabric 1.20.1/26.3, Forge 26.3) | ✅ |
 
+### 0.6 verification (2026-10-10)
+
+| Check | Result |
+|---|---|
+| Mixin wiki (19 pages), MixinExtras wiki (14), Fabric wiki `tutorial:mixin*` (15), Fabric docs mixin pages (6): fetched live, every page URL HEAD/GET-checked | ✅ 53/54 reachable; the exception is one versioned Fabric page (`1.21.10/develop/mixins/bytecode`: 404 on the site, its GitHub fallback answered 503 at check time → shown as `[UNVERIFIED URL]`) |
+| `docs_search` topic=mixin: "@WrapOperation" → MixinExtras `WrapOperation`; "@Inject cancellable" → Mixin wiki "Cancellable Injections" + Fabric wiki `#cancelling_the_target_method` | ✅ |
+
 ### M4 verification (2026-10-10)
 
 | Check | Result |
@@ -362,12 +394,14 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 - ~~**M3 — docs & deeper Mixin checks:** `docs_search`, `@At` CONSTANT/JUMP/LOAD/STORE/NEW and `@Slice` checks.~~ ✅
 - ~~**M4 — profile check:** `check_profiles`.~~ ✅
 - ~~**0.5 — token economy:** outline-first `get_class`, paging and caps everywhere; content/mixin generation removed.~~ ✅
+- ~~**0.6 — Mixin docs:** Mixin / MixinExtras / Fabric mixin docs in `docs_search` (`topic`, `sources`); `run_client` / `run_server` removed.~~ ✅
 - **Next (proposal):** Kotlin DSL build scripts, richer source navigation (callers/usages).
 
 ### Known limitations
 
 - Text search in `search_mc_source` needs a sources jar (project index with sources, e.g. Loom/MDG); decompiled sources are per class.
 - `check_profiles` compares only what the references publish. For example, the Forge 1.20.1 MDK has no Gradle wrapper in `mdk/`, and newer Forge branches may not be found.
+- `docs_search` Mixin wikis need `git` on the PATH (shallow clone into the cache); without it those sources are reported as unavailable and the rest still works. Fabric wiki pages are DokuWiki markup converted heuristically (headings, code, links).
 - `docs_search`: Fabric docs pull code from `reference/` files (`@[code]` includes); those snippets show as include
   markers, not code. Forge has no 26.x docs, so the closest set (1.21.x) is used and FFN says so.
 - `@ModifyVariable` LOAD/STORE checks work by slot and type. Name checks need a local variable table, which Mojang jars do not have.
@@ -400,7 +434,7 @@ Parchment и Gradle-плагинов берутся из официальных 
 с правилом `since: "<версия>"` в папку пользовательских профилей (`~/.config/ffn/profiles`, на Windows
 `%APPDATA%\ffn\profiles`, или путь из `FFN_PROFILES_DIR`) — пересобирать сервер не нужно.
 
-**Сейчас работают (0.5.0):**
+**Сейчас работают (0.6.0):**
 
 - `list_versions`, `get_profile`, `create_project`.
 - `gradle_build`: сборка с автоматическим выбором JDK, таймаутом, логом в `.ffn/logs` и кратким разбором ошибок (файл:строка, Mixin, зависимости, версия Java).
@@ -416,7 +450,8 @@ Parchment и Gradle-плагинов берутся из официальных 
 - `docs_search` — поиск по официальной документации Fabric/Forge/NeoForge, праймерам NeoForged и анонсам Fabric:
   - набор документации выбирается под версию;
   - найденное кэшируется;
-  - результаты содержат фрагменты и код, а каждая ссылка проверена на существование.
+  - результаты содержат фрагменты и код, а каждая ссылка проверена на существование;
+  - документация по Mixin: вики SpongePowered Mixin, вики MixinExtras, страницы Fabric wiki `tutorial:mixin*` и раздел `develop/mixins` Fabric docs. Она не привязана к версии Minecraft (`versioned: false`), ищется всегда и показывается без метки версии. Параметр `topic: "mixin"` ограничивает поиск только ею, `sources: [...]` — конкретными источниками. Вики скачиваются через `git clone --depth 1` (нужен установленный git).
 
 - `check_profiles` сравнивает профили с официальными fabric-example-mod, NeoForge/Forge MDK, Gradle и метаданными плагинов, а также с новыми релизами Minecraft:
   - показывает, что устарело или не проверено;

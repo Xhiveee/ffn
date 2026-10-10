@@ -3,9 +3,12 @@
  * (declared in profiles/docs/*.yaml), cached on disk, split into heading sections and ranked with BM25.
  * Nothing about specific versions lives here: which doc sets exist comes from the repositories themselves.
  */
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
+import { gunzipSync } from "node:zlib";
 import YAML from "yaml";
 import { z } from "zod";
 import type { FfnConfig } from "../config.js";
@@ -18,6 +21,8 @@ const FileRule = z.object({
   versionFromContent: z.string().optional(),
   url: z.string(),
   fallbackUrl: z.string().optional(),
+  /** Extra topics for pages matched by this rule (e.g. the mixin pages inside a loader's docs). */
+  topics: z.array(z.string()).optional(),
 });
 const SourceSchema = z
   .object({
@@ -25,11 +30,21 @@ const SourceSchema = z
     title: z.string(),
     loaders: z.array(z.enum(["fabric", "forge", "neoforge"])),
     kind: z.enum(["docs", "primer", "changelog"]).default("docs"),
+    /** Topics of every page of this source, e.g. [mixin]; docs_search can be restricted to one topic. */
+    topics: z.array(z.string()).default([]),
+    /** false: the docs are not tied to Minecraft versions (e.g. the Mixin wiki); pages get version "any". */
+    versioned: z.boolean().default(true),
+    /** Page title from the file name (GitHub wiki style: dashes are spaces) instead of the first heading. */
+    titleFromName: z.boolean().default(false),
     zip: z.string().optional(),
     githubTree: z.object({ repo: z.string(), branch: z.string() }).optional(),
+    /** Any git repository (e.g. a GitHub wiki: https://github.com/<owner>/<repo>.wiki.git), shallow-cloned. */
+    git: z.object({ url: z.string(), branch: z.string().optional() }).optional(),
+    /** A DokuWiki: pages listed from its sitemap (do=sitemap), raw text via do=export_raw. repoPath = page id. */
+    dokuwiki: z.object({ base: z.string() }).optional(),
     files: z.array(FileRule),
   })
-  .refine((s) => !!s.zip !== !!s.githubTree, { message: "exactly one of zip or githubTree" });
+  .refine((s) => [s.zip, s.githubTree, s.git, s.dokuwiki].filter(Boolean).length === 1, { message: "exactly one of zip, githubTree, git or dokuwiki" });
 export type DocSource = z.infer<typeof SourceSchema>;
 const SourcesFile = z.object({ sources: z.array(SourceSchema) });
 
@@ -50,8 +65,9 @@ export interface DocPage {
   sourceId: string;
   sourceTitle: string;
   kind: DocSource["kind"];
-  /** Doc-set version: "latest", "1.21.1", "1.21.x". */
+  /** Doc-set version: "latest", "1.21.1", "1.21.x", or "any" for version-independent docs. */
   version: string;
+  topics: string[];
   repoPath: string;
   url: string;
   fallbackUrl?: string;
@@ -67,10 +83,10 @@ export interface DocSection {
 
 const DOCS_TTL_MS = 24 * 3600_000;
 
-/** Fills a URL template: $1..$9, {page}, {pad2:$n}; collapses accidental double slashes. */
+/** Fills a URL template: $1..$9, {page}, {page:url} (percent-encoded segments), {pad2:$n}; collapses accidental double slashes. */
 export function fillUrl(tpl: string, m: RegExpMatchArray, page: string): string {
   let out = tpl.replace(/\{pad2:\$(\d)\}/g, (_, d) => (m[Number(d)] ?? "").padStart(2, "0"));
-  out = out.replace(/\{page\}/g, page).replace(/\$(\d)/g, (_, d) => m[Number(d)] ?? "");
+  out = out.replace(/\{page:url\}/g, page.split("/").map(encodeURIComponent).join("/")).replace(/\{page\}/g, page).replace(/\$(\d)/g, (_, d) => m[Number(d)] ?? "");
   return out.replace(/([^:])\/{2,}/g, "$1/");
 }
 
@@ -82,12 +98,63 @@ function pageOf(m: RegExpMatchArray): string {
 
 export function slug(h: string): string {
   return h
+    .replace(/&#?\w+;/g, "")
     .toLowerCase()
     .replace(/<[^>]+>/g, "")
     .replace(/[`*_~[\]()]/g, "")
     .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .trim()
     .replace(/\s+/g, "-");
+}
+
+/** DokuWiki section id (as rendered by DokuWiki: "Effects & Use-Cases" -> "effects_use-cases"). */
+export function dokuSlug(h: string): string {
+  return h
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[_.-]+|[_.-]+$/g, "");
+}
+
+/** Convert DokuWiki markup to the Markdown subset parseMarkdown understands (headings, code, links, inline code). */
+export function dokuwikiToMarkdown(src: string): string {
+  const out: string[] = [];
+  const lines = src.replace(/\r\n/g, "\n").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const code = /^\s*<(code|file)\b[^>]*>(.*)$/.exec(line);
+    if (code) {
+      const end = new RegExp(`</${code[1]}>`);
+      const buf: string[] = [];
+      let rest = code[2]!;
+      while (!end.test(rest) && i + 1 < lines.length) {
+        if (rest.trim()) buf.push(rest);
+        rest = lines[++i]!;
+      }
+      const before = rest.split(end)[0]!;
+      if (before.trim()) buf.push(before);
+      out.push("```", ...buf, "```");
+      continue;
+    }
+    const h = /^\s*(={2,6})\s*(.+?)\s*={2,6}\s*$/.exec(line);
+    if (h) {
+      const level = Math.min(4, 7 - h[1]!.length);
+      out.push(`${"#".repeat(level)} ${inlineDoku(h[2]!)} {#${dokuSlug(h[2]!)}}`);
+      continue;
+    }
+    out.push(inlineDoku(line));
+  }
+  return out.join("\n");
+}
+
+function inlineDoku(s: string): string {
+  return s
+    .replace(/\[\[[^\]|]*\|([^\]]*)\]\]/g, "$1")
+    .replace(/\[\[([^\]]*)\]\]/g, "$1")
+    .replace(/''(.+?)''/g, "`$1`")
+    .replace(/(^|[^:])\/\/(.+?)\/\//g, "$1$2")
+    .replace(/^FIXME\s*/, "")
+    .replace(/\\\\\s*$/, "");
 }
 
 /** Strip front matter and MDX/HTML noise, then split into heading sections (code blocks kept separately). */
@@ -119,8 +186,8 @@ export function parseMarkdown(src: string): { title?: string; frontTitle?: strin
     if (h) {
       if (cur.text.trim() || cur.heading) sections.push(cur);
       const raw = h[2]!;
-      const explicit = /\{#([\w-]+)\}\s*$/.exec(raw);
-      const heading = raw.replace(/\s*\{#[\w-]+\}\s*$/, "").replace(/<[^>]+>/g, "").trim();
+      const explicit = /\{#([\w.-]+)\}\s*$/.exec(raw);
+      const heading = raw.replace(/\s*\{#[\w.-]+\}\s*$/, "").replace(/<[^>]+>/g, "").replace(/&#?\w+;/g, "").trim();
       if (h[1] === "#" && !title) title = heading;
       cur = { heading, anchor: explicit ? explicit[1]! : slug(heading), text: "", code: [] };
       continue;
@@ -221,11 +288,81 @@ export class DocsStore {
     return out;
   }
 
+  /** Shallow clone of a git repository, refreshed after the TTL; a stale clone is used when the fetch fails. */
+  private async gitFiles(src: DocSource, warnings: string[]): Promise<Map<string, string>> {
+    const { url, branch } = src.git!;
+    const dir = path.join(this.dir, "git", src.id);
+    const stamp = path.join(this.dir, "git", `${src.id}.stamp`);
+    const have = existsSync(path.join(dir, ".git"));
+    const fresh = have && existsSync(stamp) && Date.now() - (await stat(stamp)).mtimeMs < DOCS_TTL_MS;
+    if (!have && this.config.offline) throw new Error(`Offline mode and ${url} is not cached.`);
+    if (!fresh && !this.config.offline) {
+      try {
+        if (have) {
+          await git(["-C", dir, "fetch", "-q", "--depth", "1", "origin", ...(branch ? [branch] : [])]);
+          await git(["-C", dir, "reset", "-q", "--hard", "FETCH_HEAD"]);
+        } else {
+          await rm(dir, { recursive: true, force: true });
+          await mkdir(path.dirname(dir), { recursive: true });
+          await git(["clone", "-q", "--depth", "1", ...(branch ? ["--branch", branch] : []), url, dir]);
+        }
+        const now = new Date();
+        await writeFile(stamp, now.toISOString()).then(() => utimes(stamp, now, now));
+      } catch (e) {
+        if (!have) throw new Error(`git clone ${url} failed (is git installed?): ${(e as Error).message.split("\n")[0]}`);
+        warnings.push(`Using a stale clone of ${url}: ${(e as Error).message.split("\n")[0]}`);
+      }
+    }
+    const rules = src.files.map((f) => new RegExp(f.match));
+    const out = new Map<string, string>();
+    const walk = async (rel: string): Promise<void> => {
+      for (const e of await readdir(path.join(dir, rel), { withFileTypes: true })) {
+        if (e.name === ".git") continue;
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) await walk(r);
+        else if (rules.some((x) => x.test(r))) out.set(r, await readFile(path.join(dir, r), "utf8"));
+      }
+    };
+    await walk("");
+    return out;
+  }
+
+  /** DokuWiki pages: ids from the sitemap that match a rule, raw markup via do=export_raw (each cached with the TTL). */
+  private async dokuwikiFiles(src: DocSource, warnings: string[]): Promise<Map<string, string>> {
+    const base = src.dokuwiki!.base.replace(/\/+$/, "");
+    let xml = await this.cached(`${base}/doku.php?do=sitemap`, `${src.id}.sitemap`, warnings);
+    if (xml[0] === 0x1f && xml[1] === 0x8b) xml = gunzipSync(xml);
+    const ids = [...xml.toString("utf8").matchAll(/<loc>([^<]+)<\/loc>/g)]
+      .map((m) => decodeURIComponent(m[1]!.trim().slice(base.length + 1)).replace(/^doku\.php\?id=/, ""))
+      .filter((id) => src.files.some((f) => new RegExp(f.match).test(id)));
+    const out = new Map<string, string>();
+    const queue = [...new Set(ids)];
+    const worker = async () => {
+      for (let id = queue.shift(); id; id = queue.shift()) {
+        try {
+          const raw = await this.cached(`${base}/${id.split(":").map(encodeURIComponent).join(":")}?do=export_raw`, path.join(src.id, `${id.replace(/[^\w.-]+/g, "_")}.txt`), warnings);
+          out.set(id, raw.toString("utf8"));
+        } catch (e) {
+          warnings.push(`Could not fetch ${base}/${id}: ${(e as Error).message}`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, worker));
+    return out;
+  }
+
+  private files(src: DocSource, warnings: string[]): Promise<Map<string, string>> {
+    if (src.zip) return this.zipFiles(src, warnings);
+    if (src.githubTree) return this.treeFiles(src, warnings);
+    if (src.git) return this.gitFiles(src, warnings);
+    return this.dokuwikiFiles(src, warnings);
+  }
+
   async load(src: DocSource, warnings: string[]): Promise<DocPage[]> {
     let p = this.pages.get(src.id);
     if (!p) {
       p = (async () => {
-        const files = src.zip ? await this.zipFiles(src, warnings) : await this.treeFiles(src, warnings);
+        const files = await this.files(src, warnings);
         const pages: DocPage[] = [];
         for (const [repoPath, text] of files) {
           for (const rule of src.files) {
@@ -237,17 +374,19 @@ export class DocsStore {
               if (!vm) break; // e.g. a blog post that is not a version announcement
               version = vm[1]!;
             }
-            const md = parseMarkdown(text);
+            const md = parseMarkdown(src.dokuwiki ? dokuwikiToMarkdown(text) : text);
             const page = pageOf(m);
+            const name = page.split(/[/:]/).pop() || repoPath;
             pages.push({
               sourceId: src.id,
               sourceTitle: src.title,
               kind: src.kind,
-              version: version || "latest",
+              version: src.versioned ? version || "latest" : "any",
+              topics: [...new Set([...src.topics, ...(rule.topics ?? [])])],
               repoPath,
               url: fillUrl(rule.url, m, page),
               fallbackUrl: rule.fallbackUrl ? fillUrl(rule.fallbackUrl, m, page) : undefined,
-              title: md.frontTitle ?? md.title ?? page.split("/").pop() ?? repoPath,
+              title: src.titleFromName ? name.replace(/-/g, " ").replace(/ {3}/g, " - ") : (md.frontTitle ?? md.title ?? name),
               sections: md.sections,
             });
             break;
@@ -297,6 +436,11 @@ export class DocsStore {
     }
     return v;
   }
+}
+
+const execFileP = promisify(execFile);
+async function git(args: string[]): Promise<void> {
+  await execFileP("git", args, { timeout: 120_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
 }
 
 // ---------------------------------------------------------------- version selection
@@ -383,6 +527,7 @@ export function rank(pages: DocPage[], query: string, boost: (p: DocPage) => num
   const k1 = 1.2;
   const b = 0.75;
   const phrase = query.toLowerCase().trim();
+  const bare = phrase.replace(/[^a-z0-9]/g, "");
   const hits: DocHit[] = [];
   for (const d of docs) {
     let s = 0;
@@ -399,6 +544,8 @@ export function rank(pages: DocPage[], query: string, boost: (p: DocPage) => num
     if (!s) continue;
     s *= 0.5 + matched / q.length; // prefer sections matching more distinct terms
     if (phrase.length > 3 && `${d.section.heading}\n${d.section.text}`.toLowerCase().includes(phrase)) s *= 1.5;
+    // the page that is named after the query (e.g. "WrapOperation" for "@WrapOperation") is the canonical answer
+    if (bare.length > 3 && d.page.title.toLowerCase().replace(/[^a-z0-9]/g, "") === bare) s *= d.section.heading === "" || d.section.heading === d.page.title ? 2 : 1.3;
     hits.push({ page: d.page, section: d.section, score: s * boost(d.page) });
   }
   return hits.sort((a, b2) => b2.score - a.score);
@@ -406,7 +553,8 @@ export function rank(pages: DocPage[], query: string, boost: (p: DocPage) => num
 
 /** A ~maxLen window of the section text around the densest cluster of query terms. */
 export function snippet(text: string, query: string, maxLen = 320): string {
-  const clean = text.replace(/\s+/g, " ").trim();
+  // markdown links cost tokens and carry no meaning in a snippet: keep their text only
+  const clean = text.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\s+/g, " ").trim();
   if (clean.length <= maxLen) return clean;
   const q = [...tokens(query), ...identTokens(query)];
   const lower = clean.toLowerCase();
