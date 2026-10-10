@@ -32,6 +32,8 @@ rules:
         devRunArg: false
         refmap: true # generated automatically by Loom
         compatibilityLevel: auto
+        # Fabric Loader 0.19.x bundles net.fabricmc:sponge-mixin 0.17.4 (enum checked: JAVA_6..JAVA_25).
+        maxCompatibilityLevel: JAVA_25
         mixinExtras:
           bundled: true
           note: Fabric Loader >= 0.15 ships MixinExtras; no extra dependency needed.

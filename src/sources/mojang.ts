@@ -26,6 +26,8 @@ export interface MojangVersionDetails {
    * From 26.1 the game ships unobfuscated, so this flips to false — derived, never hardcoded.
    */
   obfuscated: boolean;
+  /** Download URLs (client/server jars and, for obfuscated versions, ProGuard mappings). */
+  downloads: Partial<Record<"client" | "server" | "client_mappings" | "server_mappings", { url: string; sha1?: string; size?: number }>>;
 }
 
 export function parseMojangManifest(json: string): MojangManifest {
@@ -48,5 +50,10 @@ export function parseMojangVersionDetails(json: string): MojangVersionDetails {
     javaMajor: d.javaVersion?.majorVersion,
     javaComponent: d.javaVersion?.component,
     obfuscated: "client_mappings" in downloads || "server_mappings" in downloads,
+    downloads: Object.fromEntries(
+      ["client", "server", "client_mappings", "server_mappings"]
+        .filter((k) => downloads[k] && typeof (downloads[k] as { url?: unknown }).url === "string")
+        .map((k) => [k, downloads[k] as { url: string; sha1?: string; size?: number }]),
+    ),
   };
 }

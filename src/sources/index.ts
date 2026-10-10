@@ -1,3 +1,4 @@
+import { parseMavenMetadata } from "../util/maven.js";
 import { HttpError, type Fetcher, type FetchResult } from "../util/http.js";
 import { compareMcVersions, isReleaseVersion, parseMcVersion } from "../util/mcversion.js";
 import { ENDPOINTS } from "./endpoints.js";
@@ -155,6 +156,20 @@ export class VersionService {
   async parchment(mc: string, notes?: Notes): Promise<string | undefined> {
     const xml = await this.getOptional(ENDPOINTS.parchmentMetadata(mc), notes);
     return xml ? latestFromMetadata(xml, { allowUnstable: false }) : undefined;
+  }
+
+  /** Raw text of any endpoint through the cache (404 → undefined). */
+  async text(url: string, notes?: Notes, ttlMs?: number): Promise<string | undefined> {
+    return this.getOptional(url, notes, ttlMs);
+  }
+
+  /** Newest MCPConfig build for an MC version (SRG names; relevant while Forge used SRG at runtime). */
+  async mcpConfig(mc: string, notes?: Notes): Promise<string | undefined> {
+    const xml = await this.getOptional(ENDPOINTS.mcpConfigMetadata, notes);
+    if (!xml) return undefined;
+    const md = parseMavenMetadata(xml);
+    const cands = md.versions.filter((v) => v === mc || (v.startsWith(`${mc}-`) && /^\d{8}\.\d{6}$/.test(v.slice(mc.length + 1))));
+    return cands.sort().at(-1);
   }
 
   async latestPluginVersion(

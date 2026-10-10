@@ -38,6 +38,7 @@ rules:
         refmap: true # runtime uses SRG names
         annotationProcessor: org.spongepowered:mixin:0.8.5:processor
         compatibilityLevel: JAVA_17
+        maxCompatibilityLevel: JAVA_18 # Mixin 0.8.5
         mixinExtras:
           bundled: false
           note: Not bundled on 1.20.1. Add io.github.llamalad7:mixinextras-forge via jarJar and call MixinExtrasBootstrap.init().
@@ -79,6 +80,7 @@ rules:
         refmap: false
         annotationProcessor: null
         compatibilityLevel: auto
+        maxCompatibilityLevel: null # sponge-mixin version not verified for 20.2-21.0
         mixinExtras:
           bundled: false
           note: Add MixinExtras via jarJar on 20.2.
@@ -104,7 +106,9 @@ rules:
 
   - since: "1.21.1"
     verified: ["1.21.1"]
-    set: {}
+    set:
+      mixin:
+        maxCompatibilityLevel: JAVA_25 # net.fabricmc:sponge-mixin 0.16.4 (21.1), 0.17.4 (26.x)
 
   - since: "1.21.11"
     description: loaderVersion no longer required in neoforge.mods.toml

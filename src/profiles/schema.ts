@@ -48,6 +48,8 @@ const MixinSchema = z
     /** "auto" -> JAVA_<java version>, or an explicit Mixin compatibility level such as "JAVA_17". */
     compatibilityLevel: z.string(),
     minMixinVersion: z.string().optional(),
+    /** Highest compatibilityLevel the Mixin bundled with this loader/version is known to accept (mixin_validate warns above it). */
+    maxCompatibilityLevel: z.string().nullable().optional(),
     mixinExtras: z
       .object({
         bundled: z.boolean(),

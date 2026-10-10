@@ -1,3 +1,4 @@
+import { IndexService } from "./index/service.js";
 import { loadConfig, type FfnConfig } from "./config.js";
 import { loadProfiles, type ProfileSet } from "./profiles/loader.js";
 import { resolveProfile, type VersionFacts } from "./profiles/resolve.js";
@@ -11,6 +12,8 @@ export interface Services {
   versions: VersionService;
   /** Profiles are reloaded on every call so edits to user profiles apply without a restart. */
   profiles(): Promise<ProfileSet>;
+  /** Minecraft source/bytecode indexes (built lazily, cached on disk). */
+  indexes: IndexService;
 }
 
 export function createServices(opts: { config?: FfnConfig; fetcher?: Fetcher } = {}): Services {
@@ -23,11 +26,14 @@ export function createServices(opts: { config?: FfnConfig; fetcher?: Fetcher } =
       offline: config.offline,
       userAgent: config.userAgent,
     });
-  return {
+  const services: Services = {
     config,
     versions: new VersionService(fetcher),
     profiles: () => loadProfiles(config.builtinProfilesDir, config.userProfilesDir),
+    indexes: undefined as unknown as IndexService,
   };
+  services.indexes = new IndexService(services);
+  return services;
 }
 
 export interface ProfileLookup {

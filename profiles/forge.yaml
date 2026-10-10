@@ -35,6 +35,8 @@ rules:
         refmap: true
         annotationProcessor: org.spongepowered:mixin:0.8.5:processor
         compatibilityLevel: JAVA_17
+        # Mixin 0.8.5 (Forge 1.20.1-1.20.4); its CompatibilityLevel enum ends at JAVA_18.
+        maxCompatibilityLevel: JAVA_18
         mixinExtras:
           bundled: false
           note: Not bundled. Add io.github.llamalad7:mixinextras-forge via jarJar and call MixinExtrasBootstrap.init().
@@ -103,6 +105,8 @@ rules:
         mixinGradle: null
         annotationProcessor: null
         compatibilityLevel: JAVA_21
+        # Mixin 0.8.7 (seen with Forge 1.21.1 and 26.3); enum ends at JAVA_21.
+        maxCompatibilityLevel: JAVA_21
 
   - since: "1.21.11"
     description: ForgeGradle 7 (official MDK for 1.21.11+); Forge ships MixinExtras

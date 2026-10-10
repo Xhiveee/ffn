@@ -100,12 +100,18 @@ describe("MCP server", () => {
     expect(text(r)).toMatch(/Invalid modId/);
   });
 
+  it("run_server refuses without acceptEula (EULA is never auto-accepted)", async () => {
+    const r = await client.callTool({ name: "run_server", arguments: { projectDir: "/nonexistent-ffn-project" } });
+    expect(r.isError).toBe(true);
+  });
+
   it("stubs answer with a clear not-implemented message", async () => {
     for (const s of STUBS) {
       const tool = (await client.listTools()).tools.find((t) => t.name === s.name)!;
       expect(tool.description).toMatch(/NOT IMPLEMENTED YET/);
     }
-    const r = await client.callTool({ name: "mixin_targets", arguments: { mcVersion: "1.20.1", targetClass: "net.minecraft.server.MinecraftServer" } });
+    expect(STUBS.map((s) => s.name).sort()).toEqual(["docs_search", "generate", "mixin_port", "port_mod"]);
+    const r = await client.callTool({ name: "docs_search", arguments: { query: "events" } });
     expect(r.isError).toBe(true);
     expect(text(r)).toMatch(/not implemented yet/);
   });

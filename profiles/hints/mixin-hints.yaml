@@ -1,0 +1,150 @@
+# Policy hints for mixin tools: when a mixin target matches, FFN suggests the loader event/API that
+# usually covers the same need. Hints never block anything. Event class names change between loader
+# versions, so each hint names the concept and the common class names; verify against the loader docs.
+# Users can add files to <FFN_PROFILES_DIR>/hints/*.yaml with the same structure (appended).
+#
+# targets: class names (Mojang, Yarn or simple names) — matched against the end of the target name.
+# methods: optional regexes on the target method name (any method if omitted).
+hints:
+  - id: server-lifecycle
+    targets: [net.minecraft.server.MinecraftServer]
+    methods: ["^(loadLevel|loadWorld|runServer|stopServer|shutdown|initServer|setupServer|createLevels|createWorlds|prepareLevels)$"]
+    use: Run code when the server/world starts or stops
+    fabric: "Fabric API ServerLifecycleEvents.SERVER_STARTING / SERVER_STARTED / SERVER_STOPPING / SERVER_STOPPED"
+    forge: "ServerAboutToStartEvent / ServerStartingEvent / ServerStartedEvent / ServerStoppingEvent (MinecraftForge.EVENT_BUS)"
+    neoforge: "ServerAboutToStartEvent / ServerStartingEvent / ServerStartedEvent / ServerStoppingEvent (NeoForge.EVENT_BUS)"
+  - id: server-tick
+    targets: [net.minecraft.server.MinecraftServer]
+    methods: ["^(tickServer|tickChildren|tick|tickWorlds)$"]
+    use: Run code every server tick
+    fabric: "ServerTickEvents.START_SERVER_TICK / END_SERVER_TICK"
+    forge: "TickEvent.ServerTickEvent (Phase START/END); newer Forge: TickEvent.ServerTickEvent.Pre/Post"
+    neoforge: "ServerTickEvent.Pre / ServerTickEvent.Post (20.6+); TickEvent.ServerTickEvent before"
+  - id: level-tick
+    targets: [ServerLevel, ServerWorld, net.minecraft.world.level.Level, net.minecraft.world.World]
+    methods: ["^tick$"]
+    use: Run code every world tick
+    fabric: "ServerTickEvents.START_WORLD_TICK / END_WORLD_TICK"
+    forge: "TickEvent.LevelTickEvent"
+    neoforge: "LevelTickEvent.Pre / Post (20.6+)"
+  - id: player-tick
+    targets: [ServerPlayer, ServerPlayerEntity, net.minecraft.world.entity.player.Player, PlayerEntity]
+    methods: ["^tick$"]
+    use: Run code every player tick
+    fabric: "No direct event; often ServerTickEvents + iterate players, or a mixin is justified"
+    forge: "TickEvent.PlayerTickEvent"
+    neoforge: "PlayerTickEvent.Pre / Post (20.6+)"
+  - id: living-damage
+    targets: [LivingEntity]
+    methods: ["^(hurt|damage|actuallyHurt|applyDamage|hurtServer)$"]
+    use: React to or cancel/modify damage
+    fabric: "ServerLivingEntityEvents.ALLOW_DAMAGE / AFTER_DAMAGE"
+    forge: "LivingAttackEvent, LivingHurtEvent, LivingDamageEvent"
+    neoforge: "LivingIncomingDamageEvent, LivingDamageEvent.Pre/Post (20.5+); LivingAttackEvent/LivingHurtEvent before"
+  - id: living-death
+    targets: [LivingEntity]
+    methods: ["^(die|onDeath)$"]
+    use: React to entity death
+    fabric: "ServerLivingEntityEvents.ALLOW_DEATH / AFTER_DEATH"
+    forge: "LivingDeathEvent"
+    neoforge: "LivingDeathEvent"
+  - id: block-break
+    targets: [ServerPlayerGameMode, ServerPlayerInteractionManager]
+    methods: ["^(destroyBlock|tryBreakBlock)$"]
+    use: React to or cancel block breaking
+    fabric: "PlayerBlockBreakEvents.BEFORE / AFTER / CANCELED"
+    forge: "BlockEvent.BreakEvent"
+    neoforge: "BlockEvent.BreakEvent"
+  - id: block-use
+    targets: [ServerPlayerGameMode, ServerPlayerInteractionManager, BlockBehaviour, AbstractBlock, BlockStateBase, AbstractBlockState]
+    methods: ["^(useItemOn|interactBlock|use|useWithoutItem|useItemOn|onUse)$"]
+    use: Right-click on a block
+    fabric: "UseBlockCallback.EVENT"
+    forge: "PlayerInteractEvent.RightClickBlock"
+    neoforge: "PlayerInteractEvent.RightClickBlock (or UseItemOnBlockEvent, 21.x)"
+  - id: item-use
+    targets: [ServerPlayerGameMode, ServerPlayerInteractionManager]
+    methods: ["^(useItem|interactItem)$"]
+    use: Right-click with an item
+    fabric: "UseItemCallback.EVENT"
+    forge: "PlayerInteractEvent.RightClickItem"
+    neoforge: "PlayerInteractEvent.RightClickItem"
+  - id: entity-interact
+    targets: [net.minecraft.world.entity.player.Player, PlayerEntity]
+    methods: ["^(interactOn|interact)$"]
+    use: Right-click on an entity
+    fabric: "UseEntityCallback.EVENT"
+    forge: "PlayerInteractEvent.EntityInteract"
+    neoforge: "PlayerInteractEvent.EntityInteract"
+  - id: player-join
+    targets: [PlayerList, PlayerManager]
+    methods: ["^(placeNewPlayer|onPlayerConnect|remove|respawn)$"]
+    use: Player joins, leaves or respawns
+    fabric: "ServerPlayConnectionEvents.JOIN / DISCONNECT, ServerPlayerEvents.AFTER_RESPAWN"
+    forge: "PlayerEvent.PlayerLoggedInEvent / PlayerLoggedOutEvent / PlayerRespawnEvent"
+    neoforge: "PlayerEvent.PlayerLoggedInEvent / PlayerLoggedOutEvent / PlayerRespawnEvent"
+  - id: commands
+    targets: [net.minecraft.commands.Commands, CommandManager]
+    use: Register commands
+    fabric: "CommandRegistrationCallback.EVENT"
+    forge: "RegisterCommandsEvent"
+    neoforge: "RegisterCommandsEvent"
+  - id: entity-join
+    targets: [ServerLevel, ServerWorld]
+    methods: ["^(addFreshEntity|spawnEntity|addEntity|addWithUUID)$"]
+    use: Entity added to a world
+    fabric: "ServerEntityEvents.ENTITY_LOAD"
+    forge: "EntityJoinLevelEvent"
+    neoforge: "EntityJoinLevelEvent"
+  - id: chat
+    targets: [ServerGamePacketListenerImpl, ServerPlayNetworkHandler]
+    methods: ["^(handleChat|onChatMessage|broadcastChatMessage)$"]
+    use: Read or modify chat messages
+    fabric: "ServerMessageEvents.ALLOW_CHAT_MESSAGE / CHAT_MESSAGE"
+    forge: "ServerChatEvent"
+    neoforge: "ServerChatEvent"
+  - id: tooltips
+    targets: [ItemStack]
+    methods: ["^(getTooltipLines|getTooltip|addToTooltip)$"]
+    use: Add tooltip lines
+    fabric: "ItemTooltipCallback.EVENT"
+    forge: "ItemTooltipEvent"
+    neoforge: "ItemTooltipEvent"
+  - id: loot
+    targets: [LootTable, LootDataManager, ReloadableServerRegistries, LootManager]
+    use: Modify loot tables
+    fabric: "LootTableEvents.MODIFY / REPLACE"
+    forge: "LootTableLoadEvent or Global Loot Modifiers"
+    neoforge: "LootTableLoadEvent or Global Loot Modifiers"
+  - id: creative-tabs
+    targets: [CreativeModeTabs, ItemGroups, CreativeModeTab, ItemGroup]
+    use: Add items to creative tabs
+    fabric: "ItemGroupEvents.modifyEntriesEvent(key)"
+    forge: "BuildCreativeModeTabContentsEvent"
+    neoforge: "BuildCreativeModeTabContentsEvent"
+  - id: client-tick
+    targets: [net.minecraft.client.Minecraft, MinecraftClient]
+    methods: ["^tick$"]
+    use: Run code every client tick
+    fabric: "ClientTickEvents.START_CLIENT_TICK / END_CLIENT_TICK"
+    forge: "TickEvent.ClientTickEvent"
+    neoforge: "ClientTickEvent.Pre / Post (20.6+)"
+  - id: hud
+    targets: [net.minecraft.client.gui.Gui, InGameHud]
+    methods: ["^render"]
+    use: Draw on the HUD
+    fabric: "HudRenderCallback.EVENT (older) / HudElementRegistry (Fabric API for 1.21.6+)"
+    forge: "RenderGuiOverlayEvent / RegisterGuiOverlaysEvent (1.20.x), AddGuiOverlayLayersEvent (newer)"
+    neoforge: "RegisterGuiLayersEvent / RenderGuiLayerEvent (20.5+)"
+  - id: world-render
+    targets: [LevelRenderer, WorldRenderer]
+    use: Render in the world
+    fabric: "WorldRenderEvents (Fabric API)"
+    forge: "RenderLevelStageEvent"
+    neoforge: "RenderLevelStageEvent"
+  - id: key-mappings
+    targets: [net.minecraft.client.Options, GameOptions, KeyMapping, KeyBinding]
+    use: Register key bindings
+    fabric: "KeyBindingHelper.registerKeyBinding"
+    forge: "RegisterKeyMappingsEvent"
+    neoforge: "RegisterKeyMappingsEvent"
