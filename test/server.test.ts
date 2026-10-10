@@ -35,7 +35,6 @@ describe("MCP server", () => {
       [
         "list_versions",
         "get_profile",
-        "create_project",
         "search_mc_source",
         "get_class",
         "translate_mapping",
@@ -46,10 +45,6 @@ describe("MCP server", () => {
         "docs_search",
         "check_profiles",
       ].sort(),
-    );
-    const cp = tools.find((t) => t.name === "create_project")!;
-    expect(Object.keys(cp.inputSchema.properties ?? {})).toEqual(
-      expect.arrayContaining(["modId", "modName", "package", "author", "version", "mcVersion", "loader", "mappings", "targetDir"]),
     );
   });
 
@@ -80,23 +75,5 @@ describe("MCP server", () => {
     expect(text(r)).toMatch(/UNVERIFIED/);
   });
 
-  it("create_project writes a project", async () => {
-    const dir = path.join(tmpDir(), "proj");
-    const r = await client.callTool({
-      name: "create_project",
-      arguments: { targetDir: dir, loader: "neoforge", mcVersion: "1.21.1", modId: "demo", modName: "Demo", package: "com.example.demo", author: "Me" },
-    });
-    expect(r.isError, text(r)).toBeFalsy();
-    expect(existsSync(path.join(dir, "src/main/templates/META-INF/neoforge.mods.toml"))).toBe(true);
-  });
-
-  it("create_project reports validation errors as tool errors", async () => {
-    const r = await client.callTool({
-      name: "create_project",
-      arguments: { targetDir: tmpDir(), loader: "forge", mcVersion: "1.20.1", modId: "X", modName: "X", package: "com.x", author: "a" },
-    });
-    expect(r.isError).toBe(true);
-    expect(text(r)).toMatch(/Invalid modId/);
-  });
 
 });

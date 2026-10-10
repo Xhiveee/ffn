@@ -38,19 +38,6 @@ rules:
           bundled: true
           note: Fabric Loader >= 0.15 ships MixinExtras; no extra dependency needed.
       packMeta: { kind: none }
-      sampleMixin:
-        mojmap:
-          targetClass: net.minecraft.server.MinecraftServer
-          method: loadLevel
-          comment: Injected at the start of MinecraftServer.loadLevel()V
-        parchment:
-          targetClass: net.minecraft.server.MinecraftServer
-          method: loadLevel
-          comment: Injected at the start of MinecraftServer.loadLevel()V
-        yarn:
-          targetClass: net.minecraft.server.MinecraftServer
-          method: loadWorld
-          comment: Injected at the start of MinecraftServer.loadWorld()V (Yarn name)
       references:
         - https://github.com/FabricMC/fabric-example-mod
         - https://fabricmc.net/develop/

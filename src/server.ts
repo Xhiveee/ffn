@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Services } from "./services.js";
-import { registerCreateProject } from "./tools/createProject.js";
 import { registerGradleTools } from "./tools/gradle.js";
 import { registerSourceTools } from "./tools/source.js";
 import { registerMixinTools } from "./tools/mixin.js";
@@ -11,7 +10,7 @@ import { registerDocsTools } from "./tools/docs.js";
 import { registerCheckProfiles } from "./tools/checkProfiles.js";
 
 export const SERVER_NAME = "ffn";
-export const SERVER_VERSION = "0.6.0";
+export const SERVER_VERSION = "0.7.0";
 
 const INSTRUCTIONS = `FFN (ForgeFabricNeoForge) gives you the real Minecraft and loader classes, mappings, docs and build tooling for Forge, Fabric and NeoForge (Minecraft 1.20.1 → latest).
 - Never guess versions: call list_versions (live data) and get_profile before writing build files.
@@ -23,7 +22,8 @@ const INSTRUCTIONS = `FFN (ForgeFabricNeoForge) gives you the real Minecraft and
 - Use translate_mapping instead of guessing names across Mojmap/Yarn/Intermediary/SRG; docs_search for loader docs and version primers.
 - For Mixin questions (injectors, @At, MixinExtras like @WrapOperation, cancellable @Inject) use docs_search topic="mixin":
   Mixin wiki, MixinExtras wiki and Fabric's mixin pages (not tied to a Minecraft version).
-- create_project generates a buildable project; build it with gradle_build (FFN picks the JDK and parses errors).
+- Works on any existing mod project (e.g. an official MDK): loader and Minecraft version are read from its build files.
+  Build with gradle_build (FFN picks the JDK and parses errors).
 - analyze_crash explains a crash report or log (from running the game yourself) and names the culprit mod.
 - Warnings marked UNVERIFIED mean the version is newer than FFN's tested profiles: build and verify.`;
 
@@ -32,7 +32,6 @@ export function createServer(services: Services): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: INSTRUCTIONS });
   registerListVersions(server, services);
   registerGetProfile(server, services);
-  registerCreateProject(server, services);
   registerGradleTools(server, services);
   registerSourceTools(server, services);
   registerMixinTools(server, services);

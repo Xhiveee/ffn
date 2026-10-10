@@ -39,21 +39,24 @@ export interface OpenedIndex {
 }
 
 const CLASSPATH_INIT = `// Written by FFN: prints the compile classpath so FFN can locate the Minecraft jar.
+// clientCompileClasspath exists when Loom splits client and common source sets (the Fabric example mod):
+// the client-only Minecraft classes are only on that classpath.
 gradle.allprojects { p ->
     p.tasks.register("ffnPrintClasspath") {
-        def cfg = p.configurations.findByName("compileClasspath")
-        def files = cfg == null ? null : p.provider { cfg.files }
+        def cfgs = ["compileClasspath", "clientCompileClasspath"].collect { p.configurations.findByName(it) }.findAll { it != null }
+        def files = p.provider { cfgs.collectMany { it.files }.unique() }
         def projectPath = p.path
         // Build task-produced classpath entries first (e.g. ModDevGradle's patched Minecraft jar).
-        if (cfg != null) dependsOn(cfg)
+        cfgs.each { dependsOn(it) }
         doLast {
-            if (files != null) files.get().each { println "FFN-CP:" + projectPath + "|" + it.absolutePath }
+            files.get().each { println "FFN-CP:" + projectPath + "|" + it.absolutePath }
         }
     }
 }
 `;
 
 const MC_MARKER = "net/minecraft/server/MinecraftServer.class";
+const CLIENT_MARKER = "net/minecraft/client/Minecraft.class";
 
 export class IndexService {
   private loaded = new Map<string, McIndex>();
@@ -276,6 +279,7 @@ export class IndexService {
       .map((f) => path.join(project.dir, f))
       .filter(existsSync)
       .map((f) => `${f}:${statSync(f).mtimeMs}`)
+      .concat("cp2") // bump when the classpath query changes (cp2: + clientCompileClasspath)
       .join(";");
     if (existsSync(cacheFile)) {
       const c = JSON.parse(await readFile(cacheFile, "utf8")) as { stamp: string; files: string[] };
@@ -299,24 +303,47 @@ export class IndexService {
     const text = await readFile(run.result.logFile, "utf8");
     const entries = [...text.matchAll(/^FFN-CP:([^|]*)\|(.+)$/gm)].map((m) => ({ project: m[1]!, file: m[2]!.trim() }));
     const rootFiles = entries.filter((e) => e.project === ":").map((e) => e.file);
-    const files = rootFiles.length ? rootFiles : entries.map((e) => e.file);
+    const files = [...new Set(rootFiles.length ? rootFiles : entries.map((e) => e.file))];
     await writeFile(cacheFile, JSON.stringify({ stamp, files }, null, 1));
     return files;
   }
 
-  private findMinecraftJar(files: string[]): string | undefined {
+  /** First jar on the classpath containing the given Minecraft class. */
+  private findJarWith(files: string[], marker: string): string | undefined {
     const jars = files.filter((f) => f.endsWith(".jar") && existsSync(f));
     const likely = (f: string) => (/minecraft|neoforge|forge|merged|patched|joined|client/i.test(path.basename(f)) ? 0 : 1);
     jars.sort((a, b) => likely(a) - likely(b));
     for (const j of jars) {
       if (likely(j) === 1 && statSync(j).size < 5_000_000) continue;
       try {
-        if (new AdmZip(j).getEntry(MC_MARKER)) return j;
+        if (new AdmZip(j).getEntry(marker)) return j;
       } catch {
         /* not a zip */
       }
     }
     return undefined;
+  }
+
+  /** The Minecraft jar(s): one merged jar, or Loom's split pair (common + clientOnly). */
+  private findMinecraftJars(files: string[]): string[] {
+    const main = this.findJarWith(files, MC_MARKER);
+    if (!main) return [];
+    const client = this.findJarWith(files, CLIENT_MARKER);
+    return client && client !== main ? [main, client] : [main];
+  }
+
+  /** Merge split jars into one (first jar wins on duplicate entries). */
+  private mergeJars(jars: string[], out: string): void {
+    const merged = new AdmZip();
+    const seen = new Set<string>();
+    for (const j of jars) {
+      for (const e of new AdmZip(j).getEntries()) {
+        if (e.isDirectory || seen.has(e.entryName) || /^META-INF\/.*\.(SF|RSA|DSA)$/.test(e.entryName)) continue;
+        seen.add(e.entryName);
+        merged.addFile(e.entryName, e.getData());
+      }
+    }
+    merged.writeZip(out);
   }
 
   private sourcesFor(jar: string): string | undefined {
@@ -327,12 +354,27 @@ export class IndexService {
 
   private async openProject(project: ProjectInfo, onProgress?: (m: string) => void): Promise<McIndex> {
     const files = await this.projectClasspath(project, onProgress);
-    const jar = this.findMinecraftJar(files);
-    if (!jar) throw new Error("No jar containing Minecraft classes on the compile classpath.");
-    const st = statSync(jar);
-    const hash = createHash("sha1").update(`${jar}:${st.size}:${st.mtimeMs}`).digest("hex").slice(0, 16);
+    const jars = this.findMinecraftJars(files);
+    if (!jars.length) throw new Error("No jar containing Minecraft classes on the compile classpath.");
+    const hash = createHash("sha1")
+      .update(jars.map((j) => `${j}:${statSync(j).size}:${statSync(j).mtimeMs}`).join("|"))
+      .digest("hex")
+      .slice(0, 16);
     const dir = path.join(this.root, "project", hash);
     const key = `project:${hash}`;
+    let jar = jars[0]!;
+    if (jars.length > 1) {
+      // Loom split environments: index common + clientOnly together so client targets resolve
+      jar = path.join(dir, "minecraft-merged.jar");
+      const srcs = jars.map((j) => this.sourcesFor(j));
+      if (!existsSync(jar)) {
+        await mkdir(dir, { recursive: true });
+        onProgress?.(`Merging ${jars.map((j) => path.basename(j)).join(" + ")}…`);
+        this.mergeJars(jars, jar);
+      }
+      const mergedSrc = path.join(dir, "minecraft-merged-sources.jar");
+      if (srcs.every(Boolean) && !existsSync(mergedSrc)) this.mergeJars(srcs as string[], mergedSrc);
+    }
     return this.once(key, async () => {
       const existing = await McIndex.load(dir);
       if (existing) {

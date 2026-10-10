@@ -43,15 +43,6 @@ rules:
           bundled: false
           note: Not bundled on 1.20.1. Add io.github.llamalad7:mixinextras-forge via jarJar and call MixinExtrasBootstrap.init().
       packMeta: { kind: pack_format, format: 15 }
-      sampleMixin:
-        mojmap:
-          targetClass: net.minecraft.server.MinecraftServer
-          method: loadLevel
-          comment: Injected at the start of MinecraftServer.loadLevel()V
-        parchment:
-          targetClass: net.minecraft.server.MinecraftServer
-          method: loadLevel
-          comment: Injected at the start of MinecraftServer.loadLevel()V
       references:
         - https://github.com/neoforged/MDK/tree/1.20.1-legacy
         - https://github.com/neoforged/ModDevGradle/blob/main/LEGACY.md

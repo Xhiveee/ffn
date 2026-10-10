@@ -16,7 +16,7 @@ It is designed so that **new Minecraft versions need no code changes**:
   rules. A version newer than anything verified resolves to the closest lower rules and is flagged
   `UNVERIFIED`. Users can add or override rules in a config directory — no rebuild needed.
 
-> Status: **0.6.0 (Mixin docs in `docs_search`; `run_client` / `run_server` removed)**.
+> Status: **0.7.0 (works on your own projects, e.g. official MDKs; `create_project` removed)**.
 > FFN focuses on giving an AI agent accurate Minecraft/loader sources and APIs with small, paged outputs (see [Token economy](#token-economy)).
 
 ---
@@ -27,7 +27,6 @@ It is designed so that **new Minecraft versions need no code changes**:
 |---|---|---|
 | `list_versions` | ✅ | Minecraft releases (optionally snapshots) with loader availability; for one version: Fabric Loader / Fabric API / Yarn, Forge recommended/latest, NeoForge stable/beta, Parchment, Java, recommended Gradle plugin per loader |
 | `get_profile` | ✅ | Resolved profile for `(mcVersion, loader)`: Java, Gradle + plugin, metadata file, mappings, Mixin registration/refmap/MixinExtras/max compatibility level, with extrapolation warnings |
-| `create_project` | ✅ | Ready-to-build project: Gradle wrapper, `build.gradle`, `gradle.properties`, `settings.gradle`, loader metadata, main class, example Mixin + `<modid>.mixins.json` wired correctly for that loader/version, assets/data folders, `.ffn/project.json` |
 | `gradle_build` | ✅ | Runs Gradle tasks with an automatically chosen JDK, timeout and full log; returns structured findings (javac `file:line` errors, Mixin AP, dependency resolution, JVM/toolchain mismatch…) |
 | `analyze_crash` | ✅ | Crash report / log analysis: root exception, Mixin failures, missing/duplicate mods, class-version problems; scores the most likely culprit mod |
 | `search_mc_source` | ✅ | Class/member search (names, descriptors) and text search in sources of the exact MC version, vanilla or as seen by the project (loader patches included). One line per hit, 30 per page (`offset`/`limit`), snippets clipped |
@@ -40,7 +39,7 @@ It is designed so that **new Minecraft versions need no code changes**:
 
 ## Install
 
-Requirements: **Node.js 20+**. To build generated mods you need a JDK (see the table below; Gradle's
+Requirements: **Node.js 20+**. To build mods with `gradle_build` you need a JDK (see the table below; Gradle's
 toolchain support + foojay can download the target JDK automatically).
 
 ```sh
@@ -82,6 +81,26 @@ Environment variables (all optional):
 | `FFN_JDKS` | unset | Extra JDK locations (path-separated) for automatic JDK selection |
 
 You can try it with the MCP Inspector: `npx @modelcontextprotocol/inspector node dist/index.js`.
+
+## Your project (no FFN files needed)
+
+FFN does not create projects: start from the official MDK (Fabric example mod, NeoForge MDKs, Forge MDK zip) and
+pass its directory as `projectDir`. `gradle_build`, `mixin_validate`, the project source index (`source: "project"`
+of `search_mc_source` / `get_class` / `mixin_targets`) and `docs_search` read the project's own files:
+
+| What | Read from (first match wins) |
+|---|---|
+| Loader | Gradle plugin in `build.gradle(.kts)` / `settings.gradle(.kts)`: Loom (`fabric-loom`, `net.fabricmc.fabric-loom[-remap]`) → Fabric; `net.neoforged.moddev.legacyforge` → NeoForge if `neo_version` / `net.neoforged:forge`, else Forge; `net.neoforged.moddev` / `net.neoforged.gradle.*` → NeoForge; `net.minecraftforge.gradle` → Forge. Fallbacks: `fabric.mod.json`, then `neo_version` / `forge_version` in `gradle.properties` |
+| Minecraft version | `gradle.properties` `minecraft_version` (or `mc_version`); else a literal `com.mojang:minecraft:<v>` dependency; else derived from the loader version (`neo_version=21.1.77` → 1.21.1, `26.3.0.x` → 26.3, `1.20.1-47.x` → 1.20.1); else `minecraft_version_range=[x]` |
+| Mappings | Yarn: `yarn_mappings` or a `net.fabricmc:yarn:` dependency; Parchment: `mapping_channel=parchment`, `parchment_*` / `neogradle.subsystems.parchment.*` properties or a `parchment { }` block; otherwise Mojang mappings |
+| Mod id | `mod_id`; else `fabric.mod.json` `id`; else `modId` in `mods.toml` / `neoforge.mods.toml`; else the `<id>.mixins.json` name |
+| Mixin configs, sources | `*mixins*.json` under every `src/*/resources` (also one level of subprojects), e.g. the Fabric example mod's `src/main` + `src/client` |
+| Minecraft classes (project index) | the project's `compileClasspath` + `clientCompileClasspath` (asked from Gradle once, cached in `.ffn/classpath.json`); Loom's split `minecraft-common` + `minecraft-clientOnly` jars are merged so client targets resolve |
+
+Comments in build scripts are ignored (MDK comments that mention `parchment` do not switch mappings), and template
+placeholders such as `${project.minecraft_version}` or `@MC_VERSION@` are never taken as versions. If detection fails,
+the error says exactly which keys FFN looks for. A `.ffn/project.json` from older FFN versions is still honoured.
+FFN writes only caches into the project (`.ffn/classpath.json`, `.ffn/logs/`).
 
 ## Building
 
@@ -236,24 +255,16 @@ src/
     schema.ts           zod schemas for profile files and resolved profiles
     loader.ts           loads built-in + user YAML, merges
     resolve.ts          rule matching ("since/until/when"), merging, extrapolation warnings
-  generator/
-    index.ts            planProject() (resolve profile + live versions → file plan), writeProject()
-    templates/          fabric.ts, forgelike.ts (ModDevGradle, MDG-legacy, ForgeGradle 6/7), common.ts
   jdk/                  JDK discovery and selection
   exec/                 process runner (timeouts, process groups)
   diagnostics/          log/crash parser → findings + culprit
-  project/              reads .ffn/project.json or infers loader/version/mappings from Gradle files
+  project/              detects loader / MC version / mappings / mod id from the project's own Gradle files and metadata
   index/                class-file reader, Java method extractor (javasrc.ts), mappings (ProGuard/tiny/tsrg), index store, tool jars, IndexService
   mixin/                Java annotation parser, validator, event hints
   tools/                one file per tool group (gradle, source, mixin, crash, docs, checkProfiles, …); result.ts = compact output + paging
 profiles/               built-in YAML profiles (fabric/forge/neoforge.yaml) and hints/mixin-hints.yaml
-templates/              Gradle wrapper (jar + scripts) and a placeholder icon
 test/                   vitest; fixtures are real responses captured from the official endpoints
 ```
-
-Flow of `create_project`: validate input → `lookupProfile()` (Mojang facts → rule resolution) →
-live versions (loader, Fabric API / Yarn / Parchment, Gradle plugin "latest" from its maven-metadata) →
-template for the profile's `buildSystem` → write files.
 
 ### Version sources (all verified to respond)
 
@@ -266,17 +277,9 @@ template for the profile's `buildSystem` → write files.
 | Parchment | `https://maven.parchmentmc.org/org/parchmentmc/data/parchment-<mc>/maven-metadata.xml` |
 | Gradle plugins | ModDevGradle (maven.neoforged.net), ForgeGradle 6 (maven.minecraftforge.net), ForgeGradle 7 (plugins.gradle.org) |
 
-### Templates: why profile-driven instead of copying MDK zips
+### What the built-in profiles describe
 
-FFN generates projects from small, profile-driven templates that **mirror the official MDKs**
-(FabricMC/fabric-example-mod, NeoForgeMDKs/*, the Forge MDK zips and MinecraftForge/MDKExamples).
-Copying MDK zips verbatim was rejected because (a) Fabric and NeoForge MDKs live in per-version Git
-branches/repos that appear days after a release, (b) every MDK wires Mixins differently (or not at all),
-and FFN must always produce a correctly wired Mixin, and (c) generated code must be deterministic and
-testable offline. The profile's `references` field links to the upstream MDK each rule was checked
-against, so a maintainer can diff when a new version ships.
-
-### What each loader gets (built-in profiles)
+These facts drive the JDK choice of `gradle_build`, the checks of `mixin_validate` (registration, refmap, compatibility level) and `get_profile`; `check_profiles` compares them with the official MDKs.
 
 | Loader | MC | Build system | Metadata | Mixin wiring |
 |---|---|---|---|---|
@@ -289,39 +292,17 @@ against, so a maintainer can diff when a new version ships.
 | NeoForge | 1.20.2 – 1.20.4 | ModDevGradle | `META-INF/mods.toml` | `[[mixins]]` |
 | NeoForge | 1.20.5+ | ModDevGradle | `META-INF/neoforge.mods.toml` | `[[mixins]]` |
 
-### Build verification
-
-Generated projects were built with `./gradlew build` on 2026-10-10 (live versions of that day,
-Temurin JDK 17/21/25). All produced a jar; the Mixin wiring was checked inside the jars (refmap with SRG
-names where needed, `MixinConfigs` manifest entry, `[[mixins]]` / `fabric.mod.json` registration).
-
-| Project | Result | Notes |
-|---|---|---|
-| Fabric 1.20.1 (Mojmap) | ✅ | Loom 1.18.4 — Gradle must run on JDK 25 |
-| Fabric 1.20.1 (Yarn) | ✅ | |
-| Fabric 1.21.1 | ✅ | |
-| Fabric 26.3 | ✅ | non-remapping Loom, Java 25 |
-| Forge 1.20.1 | ✅ | MDG legacyforge, refmap `m_130006_` |
-| Forge 1.20.4 | ✅ | ForgeGradle 6 + MixinGradle, refmap |
-| Forge 1.21.1 | ✅ | ForgeGradle 6, no reobf |
-| Forge 26.3 | ✅ | ForgeGradle 7 |
-| NeoForge 1.20.1 | ✅ | `net.neoforged:forge` 1.20.1-47.1.106 via MDG legacyforge |
-| NeoForge 1.21.1 | ✅ | |
-| NeoForge 26.3 | ✅ | beta build 26.3.0.65-beta (no stable yet) |
-
 ### M2 verification (2026-10-10)
 
 | Check | Result |
 |---|---|
-| `mixin_validate` on all 11 generated projects (Fabric 1.20.1 Mojmap + Yarn, 1.21.1, 26.3; Forge 1.20.1, 1.20.4, 1.21.1, 26.3; NeoForge 1.20.1, 1.21.1, 26.3), project index | ✅ no errors |
+| `mixin_validate` on 11 sample projects (Fabric 1.20.1 Mojmap + Yarn, 1.21.1, 26.3; Forge 1.20.1, 1.20.4, 1.21.1, 26.3; NeoForge 1.20.1, 1.21.1, 26.3), project index | ✅ no errors |
 | Same with the vanilla index for 1.20.1 and 26.3, every loader | ✅ |
 | Deliberately broken mixin (Forge 26.3): wrong method name, `@Shadow` typo, CallbackInfo on a boolean method, INVOKE the target never calls, wrong handler params, missing listed class, `JAVA_25` with Mixin 0.8.7 | ✅ each one reported |
 | Yarn project using a Mojmap name | ✅ reported with the Yarn name |
 | `gradle_build` (JDK auto-pick; broken source → `file:line` compile error) | ✅ |
 | `analyze_crash` on a real Mixin crash | ✅ culprit `ffnsample`, high confidence |
 | `translate_mapping` `MinecraftServer#loadLevel` (1.20.1) | ✅ obf `n_`, intermediary `method_3735`, yarn `loadWorld`, srg `m_130006_` |
-
-Reproduce with `node scripts/gen-sample.mjs <dir> <loader> <mc>` and `scripts/build-generated.sh <dir>`.
 
 ### M3 verification (2026-10-10)
 
@@ -337,22 +318,28 @@ Reproduce with `node scripts/gen-sample.mjs <dir> <loader> <mc>` and `scripts/bu
 | Mixin wiki (19 pages), MixinExtras wiki (14), Fabric wiki `tutorial:mixin*` (15), Fabric docs mixin pages (6): fetched live, every page URL HEAD/GET-checked | ✅ 53/54 reachable; the exception is one versioned Fabric page (`1.21.10/develop/mixins/bytecode`: 404 on the site, its GitHub fallback answered 503 at check time → shown as `[UNVERIFIED URL]`) |
 | `docs_search` topic=mixin: "@WrapOperation" → MixinExtras `WrapOperation`; "@Inject cancellable" → Mixin wiki "Cancellable Injections" + Fabric wiki `#cancelling_the_target_method` | ✅ |
 
+### 0.7 verification (2026-10-10, compile only)
+
+| Check | Result |
+|---|---|
+| Detection without `.ffn/project.json` on 11 sample projects (copies with `.ffn` removed: Fabric 1.20.1 Mojmap + Yarn, 1.21.1, 26.3; Forge 1.20.1, 1.20.4, 1.21.1, 26.3; NeoForge 1.20.1, 1.21.1, 26.3) | ✅ loader, MC version, mappings, mod id identical to the old `project.json` |
+| Same 11: `gradle_build compileJava` + `mixin_validate` (project index) | ✅ all compile, all mixins valid |
+| Official MDKs: Fabric example mod (26.3, split client source set), NeoForge `MDK-1.21.1-ModDevGradle` (Parchment), `MDK-1.21.1-NeoGradle`, `MDK-Forge-1.20.1-ModDevGradle`, Forge MDK zips 1.20.1 / 1.20.4 / 1.21.1 | ✅ detected correctly (7/7) |
+| Official MDKs `gradle_build compileJava` + `mixin_validate`: Fabric example mod, NeoForge 1.21.1 MDG, Forge 1.21.1, Forge 1.20.1 MDG | ✅ (the Fabric example mod's client mixin targeting `net.minecraft.client.Minecraft` first failed — client classes are in Loom's separate `clientOnly` jar; fixed by indexing both) |
+
 ### M4 verification (2026-10-10)
 
 | Check | Result |
 |---|---|
 | `check_profiles` live: no outdated items. Forge 26.3 MDK reference not published; Forge 1.20.1 plugin deviation reported as info | ✅ |
-| Regression: single-loader `create_project` on Fabric 26.3 → `gradle_build compileJava` | ✅ compiles |
 | Runtime | ⚠️ not run (compile-only verification at the user's request) |
 
 ## Development
 
 ```sh
 npm run build && npm test
-node scripts/gen-sample.mjs /tmp/ffn/forge-1.20.1 forge 1.20.1   # create a project with live data
-JDKS=$HOME/jdks scripts/build-generated.sh /tmp/ffn/forge-1.20.1   # ./gradlew build with the right JDK
 node scripts/smoke-stdio.mjs 1.21.1                                 # talk to dist/index.js over stdio
-node scripts/call-tool.mjs mixin_validate '{"projectDir":"/tmp/ffn/forge-1.20.1"}'  # call any tool in-process
+node scripts/call-tool.mjs mixin_validate '{"projectDir":"/path/to/mdk"}'  # call any tool in-process
 ```
 
 ## Adding a profile for a new Minecraft version
@@ -381,21 +368,22 @@ Rules are merged in order (built-ins first, then user files alphabetically): obj
 scalars replace, `addNotes` appends. Conditions: `since`, `until` (inclusive) and `when: { obfuscated: true|false }`.
 Profiles are validated with zod; errors name the file and field. They are re-read on every call, so edits
 apply without restarting the server. To contribute a rule upstream, add it to `profiles/<loader>.yaml`,
-add a test in `test/profiles.test.ts`, and build a generated project.
+add a test in `test/profiles.test.ts`, and build the official MDK of that version with `gradle_build`.
 
 Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN need code: add a value to
-`BUILD_SYSTEMS` in `src/profiles/schema.ts` and a template in `src/generator/templates/`.
+`BUILD_SYSTEMS` in `src/profiles/schema.ts` and its plugin id to the detection in `src/project/info.ts`.
 
 ## Roadmap
 
-- ~~**M1 — foundation:** live versions, profiles, `create_project`.~~ ✅
+- ~~**M1 — foundation:** live versions, profiles.~~ ✅
 - ~~**M2 — build, run, source & Mixin intelligence:** `gradle_build`, `analyze_crash`,
   source index + mappings, `mixin_targets` / `mixin_validate`.~~ ✅
 - ~~**M3 — docs & deeper Mixin checks:** `docs_search`, `@At` CONSTANT/JUMP/LOAD/STORE/NEW and `@Slice` checks.~~ ✅
 - ~~**M4 — profile check:** `check_profiles`.~~ ✅
 - ~~**0.5 — token economy:** outline-first `get_class`, paging and caps everywhere; content/mixin generation removed.~~ ✅
 - ~~**0.6 — Mixin docs:** Mixin / MixinExtras / Fabric mixin docs in `docs_search` (`topic`, `sources`); `run_client` / `run_server` removed.~~ ✅
-- **Next (proposal):** Kotlin DSL build scripts, richer source navigation (callers/usages).
+- ~~**0.7 — bring your own project:** `create_project` removed; detection from MDK build files.~~ ✅
+- **Next (proposal):** richer source navigation (callers/usages), multi-loader (Architectury-style) project detection.
 
 ### Known limitations
 
@@ -409,6 +397,7 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 - The Java parser for mixin classes is heuristic: it handles normal mixin code, but not every Java construct.
 - The vanilla index does not contain loader patches. Use the project index for Forge/NeoForge-patched methods.
 - NeoForge 1.20.2–1.21.0: the maximum Mixin compatibility level is not verified (no warning is given).
+- Project detection reads the root project's build files; multi-loader layouts (Architectury, MultiLoader-Template with `common/` + per-loader subprojects) are not detected as such — point `projectDir` at the loader subproject if it has its own `gradle.properties`, or expect an error.
 - FFN no longer launches the game (`run_client` / `run_server` were removed in 0.6.0); runtime behaviour is checked by running the game yourself.
 - `get_class method=…` finds methods in the source with a lightweight brace-matching parser; overloads are matched by simple parameter type names.
 
@@ -434,9 +423,10 @@ Parchment и Gradle-плагинов берутся из официальных 
 с правилом `since: "<версия>"` в папку пользовательских профилей (`~/.config/ffn/profiles`, на Windows
 `%APPDATA%\ffn\profiles`, или путь из `FFN_PROFILES_DIR`) — пересобирать сервер не нужно.
 
-**Сейчас работают (0.6.0):**
+**Сейчас работают (0.7.0):**
 
-- `list_versions`, `get_profile`, `create_project`.
+- `list_versions`, `get_profile`.
+- **Свой проект:** FFN больше не создаёт проекты (`create_project` удалён в 0.7.0) — скачайте официальный MDK и передайте его папку в `projectDir`. Загрузчик, версия Minecraft, маппинги и mod id определяются по файлам самого проекта: плагин Gradle в `build.gradle(.kts)` (Loom, ModDevGradle, NeoGradle, ForgeGradle), `gradle.properties` (`minecraft_version`, `neo_version`/`forge_version`, `yarn_mappings`, `parchment_*`, `mapping_channel`, `mod_id`), `fabric.mod.json`/`mods.toml`. Комментарии и шаблонные плейсхолдеры (`${...}`, `@MC_VERSION@`) игнорируются; `.ffn/project.json` не нужен.
 - `gradle_build`: сборка с автоматическим выбором JDK, таймаутом, логом в `.ffn/logs` и кратким разбором ошибок (файл:строка, Mixin, зависимости, версия Java).
 - `analyze_crash`: разбор крэш-репорта или лога с указанием мода-виновника.
 - `search_mc_source`, `get_class`, `translate_mapping`: индекс классов конкретной версии (ванильный или из проекта, с патчами загрузчика), исходники через sources jar или Vineflower, перевод имён Mojmap ↔ Yarn ↔ Intermediary ↔ SRG.

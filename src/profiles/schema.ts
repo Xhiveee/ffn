@@ -79,14 +79,6 @@ const PackMetaSchema = z
   })
   .strict();
 
-const SampleMixinSchema = z
-  .object({
-    targetClass: z.string(),
-    method: z.string(),
-    comment: z.string().optional(),
-  })
-  .strict();
-
 /** All fields a rule may set. Every field is optional in a rule; the merged result must be complete. */
 export const ProfileFieldsSchema = z
   .object({
@@ -109,7 +101,6 @@ export const ProfileFieldsSchema = z
     packMeta: PackMetaSchema,
     /** ForgeGradle: production jar must be reobfuscated to SRG (true until Forge moved to Mojang names at runtime in 1.20.6). */
     reobfJar: z.boolean().default(false),
-    sampleMixin: z.partialRecord(MappingsSchema, SampleMixinSchema),
     references: z.array(z.string()),
     notes: z.array(z.string()),
   })
@@ -129,7 +120,6 @@ const PartialFields = z
     mixin: MixinSchema.extend({ mixinExtras: MixinSchema.shape.mixinExtras.partial().strict() }).partial().strict().optional(),
     packMeta: PackMetaSchema.partial().strict().optional(),
     reobfJar: z.boolean().optional(),
-    sampleMixin: z.partialRecord(MappingsSchema, SampleMixinSchema.partial().strict()).optional(),
     references: z.array(z.string()).optional(),
     notes: z.array(z.string()).optional(),
     /** Like `notes`, but appended instead of replacing. */

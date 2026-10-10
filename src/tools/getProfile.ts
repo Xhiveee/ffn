@@ -21,11 +21,11 @@ export async function getProfile(services: Services, args: { mcVersion: string; 
     warnings: notes.warnings,
     profileSources: (await services.profiles())[args.loader]?.sources ?? [],
   };
-  const { matchedRules, profileSources, facts: _f, references, sampleMixin, warnings: _w, notes: pnotes, ...rest } = full as typeof full & { references?: unknown; sampleMixin?: unknown; notes?: string[] };
+  const { matchedRules, profileSources, facts: _f, references, warnings: _w, notes: pnotes, ...rest } = full as typeof full & { references?: unknown; notes?: string[] };
   const plugin = { ...rest.plugin } as Record<string, unknown>;
   delete plugin.metadataUrl;
   const data = args.verbose ? full : { ...rest, plugin, ...(pnotes?.length ? { notes: pnotes } : {}), warnings: notes.warnings };
-  void matchedRules; void profileSources; void references; void sampleMixin;
+  void matchedRules; void profileSources; void references;
   const status = profile.extrapolated ? "EXTRAPOLATED (unverified)" : profile.verified ? "verified" : "within tested range";
   return ok(
     `${args.loader} profile for Minecraft ${args.mcVersion}: ${status}; based on rule since ${profile.basedOn}. Java ${profile.java}, ${profile.buildSystem} (${profile.plugin.id}), ${profile.metadata.file}, mixins via ${profile.mixin.registration}.` +
