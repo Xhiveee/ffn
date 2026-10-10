@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import path from "node:path";
 import { z } from "zod";
-import { GenerateError, planContent, writeContentPlan } from "../content/engine.js";
+import { GenerateError } from "../content/engine.js";
+import { planGenerate, writeGenerate } from "../content/run.js";
 import type { Services } from "../services.js";
 import { fail, guard, ok } from "./result.js";
 
@@ -46,37 +47,44 @@ export function registerGenerateTools(server: McpServer, services: Services): vo
     },
     (a) =>
       guard(async () => {
-        let plan;
+        const req = { projectDir: a.projectDir, kind: a.kind, name: a.name, displayName: a.displayName, params: a.params, force: a.force };
+        let out;
         try {
-          plan = await planContent(services, { projectDir: a.projectDir, kind: a.kind, name: a.name, displayName: a.displayName, params: a.params, force: a.force });
+          out = await planGenerate(services, req);
         } catch (e) {
           if (e instanceof GenerateError) return fail(e.message);
           throw e;
         }
-        const files = plan.files.map((f) => ({
+        const plan = out.plans[0]!;
+        const files = out.files.map((f) => ({
           path: path.relative(a.projectDir, f.path),
           action: f.action,
           ...(a.dryRun && typeof f.content === "string" ? { content: f.content } : {}),
         }));
+        const uniq = (xs: string[]) => [...new Set(xs)];
+        const mismatches = uniq(out.plans.flatMap((p) => p.mismatches.map((m) => `${out.plans.length > 1 ? `${p.loader}: ` : ""}${m.reason ?? m.spec}`)));
+        const errors = uniq(out.plans.flatMap((p) => p.errors));
+        const warnings = uniq(out.plans.flatMap((p) => p.warnings));
+        const notes = uniq([...out.notes, ...out.plans.flatMap((p) => p.notes)]);
         const data = {
           kind: plan.kind,
-          loader: plan.loader,
+          loader: out.plans.map((p) => p.loader).join(" + "),
           mcVersion: plan.mcVersion,
           ...(plan.catalogLoader !== plan.loader ? { templates: plan.catalogLoader } : {}),
           files,
-          verified: `${plan.checks.filter((c) => c.ok).length}/${plan.checks.length} referenced classes/members found on the project classpath`,
-          ...(plan.mismatches.length ? { mismatches: plan.mismatches.map((m) => m.reason ?? m.spec) } : {}),
-          ...(plan.errors.length ? { errors: plan.errors } : {}),
-          ...(plan.warnings.length ? { warnings: plan.warnings } : {}),
-          ...(plan.notes.length ? { notes: plan.notes } : {}),
+          verified: out.plans.map((p) => `${p.loader}: ${p.checks.filter((c) => c.ok).length}/${p.checks.length}`).join(", ") + " referenced classes/members found on the project classpath",
+          ...(mismatches.length ? { mismatches } : {}),
+          ...(errors.length ? { errors } : {}),
+          ...(warnings.length ? { warnings } : {}),
+          ...(notes.length ? { notes } : {}),
           probes: Object.fromEntries(Object.entries(plan.probes).filter(([, v]) => v)),
         };
-        if (plan.errors.length) return fail(`Not written: ${plan.errors.length} problem(s).\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``);
-        if (plan.mismatches.length && !a.force)
-          return fail(`Not written: ${plan.mismatches.length} referenced symbol(s) do not exist in ${plan.loader} ${plan.mcVersion}. Fix the catalog/profile or pass force=true.\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``);
+        if (errors.length) return fail(`Not written: ${errors.length} problem(s).\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``);
+        if (out.blocked.length && !a.force)
+          return fail(`Not written: ${out.blocked.length} problem(s) (referenced symbols missing in the target or file conflicts). Fix the catalog/profile or pass force=true.\n\n\`\`\`json\n${JSON.stringify({ ...data, blocked: out.blocked }, null, 2)}\n\`\`\``);
         if (a.dryRun) return ok(`Dry run: ${files.length} file(s) would change.`, data);
-        await writeContentPlan(plan);
-        return ok(`Generated ${plan.kind}${a.name ? ` "${a.name}"` : ""} for ${plan.loader} ${plan.mcVersion}: ${files.length} file(s) written. Build with gradle_build to compile-check.`, data);
+        await writeGenerate(req, out);
+        return ok(`Generated ${plan.kind}${a.name ? ` "${a.name}"` : ""} for ${data.loader} ${plan.mcVersion}: ${files.length} file(s) written (recorded in .ffn/content.json for port_mod). Build with gradle_build to compile-check.`, data);
       }),
   );
 }
