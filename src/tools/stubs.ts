@@ -33,14 +33,6 @@ export const STUBS: StubSpec[] = [
     meanwhile: "Create a fresh project for the target version with create_project and move code over.",
     input: { projectDir, toMcVersion: mc, toLoader: LoaderSchema.optional() },
   },
-  {
-    name: "docs_search",
-    title: "Search docs",
-    description: "Search the official Forge, Fabric and NeoForge documentation (version-aware).",
-    milestone: "M3 (docs)",
-    meanwhile: "Use https://docs.neoforged.net, https://docs.fabricmc.net, https://docs.minecraftforge.net.",
-    input: { query: z.string(), loader: LoaderSchema.optional(), mcVersion: mc.optional(), limit: z.number().int().min(1).max(50).optional() },
-  },
 ];
 
 export function notImplementedMessage(s: StubSpec): string {

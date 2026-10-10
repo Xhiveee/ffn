@@ -8,6 +8,7 @@ import { registerCrashTools } from "./tools/crash.js";
 import { registerGetProfile } from "./tools/getProfile.js";
 import { registerListVersions } from "./tools/listVersions.js";
 import { registerGenerateTools } from "./tools/generate.js";
+import { registerDocsTools } from "./tools/docs.js";
 import { registerStubs } from "./tools/stubs.js";
 
 export const SERVER_NAME = "ffn";
@@ -35,6 +36,7 @@ export function createServer(services: Services): McpServer {
   registerMixinTools(server, services);
   registerCrashTools(server, services);
   registerGenerateTools(server, services);
+  registerDocsTools(server, services);
   registerStubs(server);
   return server;
 }
