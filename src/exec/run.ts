@@ -50,6 +50,12 @@ function killTree(pid: number | undefined, signal: NodeJS.Signals): void {
   }
 }
 
+/** cmd.exe command line: each part quoted when it has spaces or cmd metacharacters (embedded quotes doubled). */
+export function winCmdLine(command: string, args: string[]): string {
+  const q = (a: string) => (a === "" || /[\s"&|<>^()%!,;=]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
+  return [command, ...args].map(q).join(" ");
+}
+
 export async function runProcess(o: RunOptions): Promise<RunResult> {
   await mkdir(path.dirname(o.logFile), { recursive: true });
   const log = createWriteStream(o.logFile);
@@ -62,13 +68,11 @@ export async function runProcess(o: RunOptions): Promise<RunResult> {
   let timedOut = false;
   const start = Date.now();
 
-  const child = spawn(o.command, o.args, {
-    cwd: o.cwd,
-    env: o.env ?? process.env,
-    detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: process.platform === "win32" && /\.(bat|cmd)$/i.test(o.command),
-  });
+  // Windows .bat/.cmd (gradlew.bat) must go through cmd.exe; quote ourselves so paths with spaces survive.
+  const bat = process.platform === "win32" && /\.(bat|cmd)$/i.test(o.command);
+  const child = bat
+    ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${winCmdLine(o.command, o.args)}"`], { cwd: o.cwd, env: o.env ?? process.env, stdio: ["ignore", "pipe", "pipe"], windowsVerbatimArguments: true, windowsHide: true })
+    : spawn(o.command, o.args, { cwd: o.cwd, env: o.env ?? process.env, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 
   const stop = (why: "timeout" | "matcher") => {
     if (why === "timeout") timedOut = true;

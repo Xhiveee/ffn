@@ -81,6 +81,11 @@ export async function subprojectPlatform(dir: string, name: string): Promise<Loa
   return undefined;
 }
 
+/** Gradle path of a directory below the root (":fabric:sub"), for any OS path flavour. */
+export function gradlePathOf(rootDir: string, dir: string, p: typeof path.posix = path): string {
+  return `:${p.relative(rootDir, dir).split(/[\\/]/).filter(Boolean).join(":")}`;
+}
+
 /** The Gradle root containing dir: the nearest ancestor (max 3 up) whose settings.gradle includes dir. */
 export async function findGradleRoot(dir: string): Promise<string> {
   let cur = dir;
@@ -274,7 +279,7 @@ export async function readProjectInfo(dirIn: string): Promise<ProjectInfo> {
   }
   const isRoot = dir === rootDir;
   const self = subprojects.find((x) => x.dir === dir);
-  const gradlePath = isRoot ? ":" : (self?.path ?? `:${path.relative(rootDir, dir).split(path.sep).join(":")}`);
+  const gradlePath = isRoot ? ":" : (self?.path ?? gradlePathOf(rootDir, dir));
   const sets = await sourceSets(dir, isRoot ? subprojects.map((x) => x.dir) : []);
   const mixinConfigs = (await Promise.all(sets.resources.map((r) => findFiles(r, (n) => /mixins.*\.json$|\.mixins\.json$/.test(n), 2)))).flat();
   const base = { dir, rootDir, gradlePath, mixinConfigs, javaSourceRoots: sets.java, resourceRoots: sets.resources, ...(isRoot && subprojects.length ? { subprojects } : {}) };

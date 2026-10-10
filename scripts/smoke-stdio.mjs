@@ -1,8 +1,9 @@
 // Spawns dist/index.js over stdio like a real MCP client and calls a few tools.
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-const transport = new StdioClientTransport({ command: process.execPath, args: [new URL("../dist/index.js", import.meta.url).pathname] });
+const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL("../dist/index.js", import.meta.url))] });
 const client = new Client({ name: "ffn-smoke", version: "0.0.0" });
 await client.connect(transport);
 const { tools } = await client.listTools();

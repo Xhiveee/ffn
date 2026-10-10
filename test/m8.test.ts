@@ -265,3 +265,49 @@ describe("multi-project builds", () => {
     expect(pickJdk(jdks, 18, "x", 23).jdk!.major).toBe(25); // nothing in range: still the next newer one
   });
 });
+
+describe("cross-platform paths", () => {
+  it("lists Windows JDK locations with win32 paths", async () => {
+    const { candidateRoots } = await import("../src/jdk/discover.js");
+    const env = { JAVA_HOME: "C:\\Java\\jdk-21", ProgramFiles: "C:\\Program Files", LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local", FFN_JDKS: "D:\\jdks;E:\\more" };
+    const roots = candidateRoots(env, "win32", "C:\\Users\\u");
+    const dirs = roots.map((r) => r.dir);
+    expect(dirs).toContain("C:\\Java\\jdk-21");
+    expect(dirs).toContain("D:\\jdks");
+    expect(dirs).toContain("E:\\more");
+    expect(dirs).toContain("C:\\Program Files\\Eclipse Adoptium");
+    expect(dirs).toContain("C:\\Program Files\\Microsoft");
+    expect(dirs).toContain("C:\\Users\\u\\AppData\\Local\\Programs\\Eclipse Adoptium");
+    expect(dirs).toContain("C:\\Users\\u\\.gradle\\jdks");
+    expect(dirs).toContain("C:\\Users\\u\\scoop\\apps");
+    expect(dirs.some((d) => d.startsWith("/"))).toBe(false);
+  });
+  it("lists macOS and Linux JDK locations", async () => {
+    const { candidateRoots } = await import("../src/jdk/discover.js");
+    const mac = candidateRoots({ SDKMAN_DIR: "/Users/u/.sdk" }, "darwin", "/Users/u").map((r) => r.dir);
+    expect(mac).toEqual(expect.arrayContaining(["/Library/Java/JavaVirtualMachines", "/Users/u/Library/Java/JavaVirtualMachines", "/opt/homebrew/opt", "/Users/u/.sdk/candidates/java"]));
+    expect(mac).not.toContain("/usr/lib/jvm");
+    const linux = candidateRoots({}, "linux", "/home/u").map((r) => r.dir);
+    expect(linux).toEqual(expect.arrayContaining(["/usr/lib/jvm", "/home/u/.sdkman/candidates/java", "/home/u/.jdks"]));
+    expect(linux.some((d) => d.includes("Program Files"))).toBe(false);
+  });
+  it("parses the Windows registry and macOS java_home", async () => {
+    const { parseRegQuery, parseJavaHomeV } = await import("../src/jdk/discover.js");
+    const reg = `\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Eclipse Adoptium\\JDK\\21.0.4.7\\hotspot\\MSI\r\n    Path    REG_SZ    C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.4.7-hotspot\\\r\n    Main    REG_DWORD    0x1\r\n\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\JavaSoft\\JDK\\17\r\n    JavaHome    REG_SZ    C:\\Program Files\\Java\\jdk-17\r\n`;
+    expect(parseRegQuery(reg)).toEqual(["C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.4.7-hotspot", "C:\\Program Files\\Java\\jdk-17"]);
+    const jh = `Matching Java Virtual Machines (2):\n    21.0.2 (arm64) "Eclipse Adoptium" - "OpenJDK 21.0.2" /Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home\n    17.0.10 (arm64) "Azul Systems, Inc." - "Zulu 17" /Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home\n/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home\n`;
+    expect(parseJavaHomeV(jh)).toEqual(["/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home", "/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home"]);
+  });
+  it("quotes gradlew.bat command lines for cmd.exe", async () => {
+    const { winCmdLine } = await import("../src/exec/run.js");
+    expect(winCmdLine("C:\\My Mods\\demo\\gradlew.bat", ["build", "--console=plain", "-Porg.gradle.java.installations.paths=C:\\Program Files\\Java\\jdk-21,C:\\jdks\\17"])).toBe(
+      '"C:\\My Mods\\demo\\gradlew.bat" build "--console=plain" "-Porg.gradle.java.installations.paths=C:\\Program Files\\Java\\jdk-21,C:\\jdks\\17"',
+    );
+    expect(winCmdLine("gradlew.bat", ["say \"hi\""])).toBe('gradlew.bat "say ""hi"""');
+  });
+  it("maps subproject directories to Gradle paths with either separator", async () => {
+    const { gradlePathOf } = await import("../src/project/info.js");
+    expect(gradlePathOf("C:\\m\\root", "C:\\m\\root\\fabric\\sub", path.win32)).toBe(":fabric:sub");
+    expect(gradlePathOf("/m/root", "/m/root/forge", path.posix)).toBe(":forge");
+  });
+});

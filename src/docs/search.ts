@@ -309,7 +309,16 @@ export class DocsStore {
         const now = new Date();
         await writeFile(stamp, now.toISOString()).then(() => utimes(stamp, now, now));
       } catch (e) {
-        if (!have) throw new Error(`git clone ${url} failed (is git installed?): ${(e as Error).message.split("\n")[0]}`);
+        if (!have) {
+          // git is optional: GitHub wikis can be crawled page by page over HTTPS
+          const wiki = /github\.com\/([^/]+)\/([^/]+?)\.wiki(?:\.git)?$/.exec(url);
+          if (wiki) {
+            const files = await this.crawlGithubWiki(src, wiki[1]!, wiki[2]!, warnings);
+            warnings.push(`git unavailable (${(e as Error).message.split("\n")[0]}); crawled ${files.size} wiki page(s) over HTTPS instead.`);
+            return files;
+          }
+          throw new Error(`git clone ${url} failed (is git installed?): ${(e as Error).message.split("\n")[0]}`);
+        }
         warnings.push(`Using a stale clone of ${url}: ${(e as Error).message.split("\n")[0]}`);
       }
     }
@@ -324,6 +333,34 @@ export class DocsStore {
       }
     };
     await walk("");
+    return out;
+  }
+
+  /** GitHub wiki without git: raw pages from raw.githubusercontent.com/wiki, following wiki links from Home and _Sidebar. */
+  private async crawlGithubWiki(src: DocSource, owner: string, repo: string, warnings: string[], maxPages = 300): Promise<Map<string, string>> {
+    const rules = src.files.map((f) => new RegExp(f.match));
+    const out = new Map<string, string>();
+    const seen = new Set<string>(["Home", "_Sidebar"]);
+    const queue = ["Home", "_Sidebar"];
+    const linkRe = new RegExp(`github\\.com/${owner}/${repo}/wiki/([^)\\s#"'>]+)|\\[\\[(?:[^\\]|]*\\|)?([^\\]]+)\\]\\]`, "gi");
+    const worker = async () => {
+      for (let page = queue.shift(); page !== undefined; page = queue.shift()) {
+        let text: string;
+        try {
+          text = (await this.cached(`https://raw.githubusercontent.com/wiki/${owner}/${repo}/${encodeURIComponent(page)}.md`, path.join(`${src.id}-http`, `${page.replace(/[^\w.-]+/g, "_")}.md`), [])).toString("utf8");
+        } catch {
+          continue; // missing page
+        }
+        if (rules.some((r) => r.test(`${page}.md`))) out.set(`${page}.md`, text);
+        for (const m of text.matchAll(linkRe)) {
+          const next = decodeURIComponent(m[1] ?? m[2]!.trim().replace(/ /g, "-"));
+          if (!seen.has(next) && seen.size < maxPages) seen.add(next), queue.push(next);
+        }
+      }
+    };
+    // a few workers; each re-checks the queue, so pages found late are still fetched
+    for (let round = 0; round < 50 && queue.length; round++) await Promise.all(Array.from({ length: 4 }, worker));
+    if (!out.size) warnings.push(`No pages found in the ${owner}/${repo} wiki.`);
     return out;
   }
 
