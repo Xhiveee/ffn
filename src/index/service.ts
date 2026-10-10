@@ -28,8 +28,8 @@ export interface IndexSpec {
   mappings?: IndexNamespace;
   loader?: string;
   projectDir?: string;
-  /** auto: project jar when projectDir is given (falls back to vanilla), else vanilla. */
-  source?: "auto" | "vanilla" | "project";
+  /** auto: project jar when projectDir is given (falls back to vanilla), else vanilla. loader: patched jar from a cached official MDK. */
+  source?: "auto" | "vanilla" | "project" | "loader";
 }
 
 export interface OpenedIndex {
@@ -96,6 +96,17 @@ export class IndexService {
     if (project && spec.mcVersion && spec.mcVersion !== project.mcVersion) notes.push(`mcVersion ${spec.mcVersion} differs from the project's ${project.mcVersion}; using ${spec.mcVersion}.`);
     let ns: IndexNamespace = spec.mappings ?? project?.mappings ?? "mojmap";
     const source = spec.source ?? "auto";
+    if (source === "loader" && !project) {
+      const loader = spec.loader;
+      if (loader !== "forge" && loader !== "neoforge") throw new Error('source="loader" needs loader "forge" or "neoforge" (Fabric adds no patches: use vanilla).');
+      const { loaderWorkspace } = await import("./loaderws.js");
+      const ws = await loaderWorkspace(this.services, loader, mc, onProgress);
+      const wsProject = await readProjectInfo(ws.dir);
+      const index = await this.openProject(wsProject, onProgress);
+      if (wsProject.mcVersion !== mc) throw new Error(`The official ${loader} MDK for ${mc} targets ${wsProject.mcVersion}; use projectDir with a ${mc} project.`);
+      notes.push(`Index of the ${loader}-patched Minecraft ${wsProject.mcVersion} jar from the official MDK (${ws.origin}), cached; mojmap names.`);
+      return { index, notes };
+    }
     if (project && source !== "vanilla" && (!spec.mcVersion || spec.mcVersion === project.mcVersion)) {
       try {
         const index = await this.openProject(project, onProgress);

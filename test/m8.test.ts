@@ -65,3 +65,28 @@ describe("text-search prefilter", () => {
     expect(idx.textCandidates(/runAllTasks/)).toEqual([L]);
   });
 });
+
+describe("loader workspaces", () => {
+  it("lists official MDK archives", async () => {
+    const { mdkUrls } = await import("../src/index/loaderws.js");
+    expect(mdkUrls("forge", "1.21.1", "52.1.0")[0]).toBe("https://maven.minecraftforge.net/net/minecraftforge/forge/1.21.1-52.1.0/forge-1.21.1-52.1.0-mdk.zip");
+    expect(mdkUrls("neoforge", "1.20.2")).toEqual([
+      "https://github.com/NeoForgeMDKs/MDK-1.20.2-ModDevGradle/archive/refs/heads/main.zip",
+      "https://github.com/NeoForgeMDKs/MDK-1.20.2-NeoGradle/archive/refs/heads/main.zip",
+    ]);
+  });
+  it("extracts a GitHub archive without its top folder", async () => {
+    const { extractMdk } = await import("../src/index/loaderws.js");
+    const { existsSync } = await import("node:fs");
+    const dir = tmpDir("ffn-mdk-");
+    const zip = new AdmZip();
+    zip.addFile("MDK-x-main/build.gradle", Buffer.from("plugins {}"));
+    zip.addFile("MDK-x-main/gradlew", Buffer.from("#!/bin/sh"));
+    zip.addFile("MDK-x-main/src/main/java/A.java", Buffer.from("class A {}"));
+    const z = path.join(dir, "a.zip");
+    zip.writeZip(z);
+    extractMdk(z, path.join(dir, "out"));
+    expect(existsSync(path.join(dir, "out/build.gradle"))).toBe(true);
+    expect(existsSync(path.join(dir, "out/src/main/java/A.java"))).toBe(true);
+  });
+});

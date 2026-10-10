@@ -14,10 +14,10 @@ export const indexSpecShape = {
   mappings: z.enum(INDEX_NAMESPACES).optional().describe("Names to use: mojmap (default) | parchment (= mojmap names) | yarn | intermediary | obf. Ignored for unobfuscated versions (26.1+), which only have Mojang names."),
   loader: LoaderSchema.optional(),
   projectDir: z.string().optional().describe("Use the Minecraft jar this project compiles against (includes Forge/NeoForge patches, project names)."),
-  source: z.enum(["auto", "vanilla", "project"]).optional().describe("auto (default): project jar when projectDir is given, else vanilla Minecraft."),
+  source: z.enum(["auto", "vanilla", "project", "loader"]).optional().describe("auto (default): project jar if projectDir, else vanilla. loader: Forge/NeoForge-patched jar via a cached official MDK (needs loader; first run takes minutes)."),
 };
 
-type SpecArgs = { mcVersion?: string; mappings?: (typeof INDEX_NAMESPACES)[number]; loader?: string; projectDir?: string; source?: "auto" | "vanilla" | "project" };
+type SpecArgs = { mcVersion?: string; mappings?: (typeof INDEX_NAMESPACES)[number]; loader?: string; projectDir?: string; source?: "auto" | "vanilla" | "project" | "loader" };
 export const toSpec = (a: SpecArgs): IndexSpec => ({ mcVersion: a.mcVersion, mappings: a.mappings, loader: a.loader, projectDir: a.projectDir, source: a.source });
 
 const dotted = (n: string) => n.replace(/\//g, ".");
