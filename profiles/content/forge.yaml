@@ -1,0 +1,516 @@
+# FFN content catalog — Minecraft Forge (also used for NeoForge 1.20.1, a Forge 47 fork).
+# DeferredRegister + RegistryObject; the event bus API is probed: classic IEventBus (≤1.21.5) vs EventBus 7
+# (Forge 1.21.6+/26.x: events expose a static BUS and the mod bus is a BusGroup).
+loader: forge
+
+main:
+  init: constructor
+  modBus:
+    - param: net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext
+      expr: "{{param}}.getModBusGroup()"
+      requires: ["net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext#getModBusGroup"]
+    - param: net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext
+      expr: "{{param}}.getModEventBus()"
+      requires: ["net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext#getModEventBus"]
+    - expr: "{{@net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext}}.get().getModBusGroup()"
+      requires: ["net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext#getModBusGroup"]
+    - expr: "{{@net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext}}.get().getModEventBus()"
+      requires: ["net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext#getModEventBus"]
+
+symbols:
+  ModBus: [net.minecraftforge.eventbus.api.bus.BusGroup, net.minecraftforge.eventbus.api.IEventBus]
+  DeferredRegister: net.minecraftforge.registries.DeferredRegister
+  Holder: net.minecraftforge.registries.RegistryObject
+  MinecraftForge: net.minecraftforge.common.MinecraftForge
+  FMLEnvironment: net.minecraftforge.fml.loading.FMLEnvironment
+  Dist: net.minecraftforge.api.distmarker.Dist
+  EntityAttributeCreationEvent: net.minecraftforge.event.entity.EntityAttributeCreationEvent
+  RegisterRenderers: net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers
+  SimpleChannel: [net.minecraftforge.network.SimpleChannel, net.minecraftforge.network.simple.SimpleChannel]
+  ChannelBuilder: net.minecraftforge.network.ChannelBuilder
+  NetworkRegistry: net.minecraftforge.network.NetworkRegistry
+  NetworkDirection: net.minecraftforge.network.NetworkDirection
+  PacketDistributor: net.minecraftforge.network.PacketDistributor
+  ConfigSpec: net.minecraftforge.common.ForgeConfigSpec
+  ModConfig: net.minecraftforge.fml.config.ModConfig
+  ModLoadingContext: net.minecraftforge.fml.ModLoadingContext
+  ServerTickEvent: net.minecraftforge.event.TickEvent$ServerTickEvent
+  ServerTickEventPost: net.minecraftforge.event.TickEvent$ServerTickEvent$Post
+  TickPhase: net.minecraftforge.event.TickEvent$Phase
+  ServerStartedEvent: net.minecraftforge.event.server.ServerStartedEvent
+  PlayerLoggedInEvent: net.minecraftforge.event.entity.player.PlayerEvent$PlayerLoggedInEvent
+  BreakEvent: net.minecraftforge.event.level.BlockEvent$BreakEvent
+  RegisterCommandsEvent: net.minecraftforge.event.RegisterCommandsEvent
+  GatherDataEvent: net.minecraftforge.data.event.GatherDataEvent
+  LanguageProvider: net.minecraftforge.common.data.LanguageProvider
+  PackOutput: net.minecraft.data.PackOutput
+
+probes:
+  forgeEB7: "net.minecraftforge.eventbus.api.bus.BusGroup"
+  forgeChannelBuilder: "net.minecraftforge.network.ChannelBuilder#named("
+  tabBuilderNoArg: "net.minecraft.world.item.CreativeModeTab#builder()"
+  forgeConfigSpec: "net.minecraftforge.common.ForgeConfigSpec"
+  gatherStaticBus: "net.minecraftforge.data.event.GatherDataEvent#BUS"
+
+tables:
+  configTypes:
+    int:
+      valueType: "{{@ConfigSpec}}.IntValue"
+      define: 'defineInRange("{{this.name}}", {{this.defaultLiteral}}, {{#if this.hasRange}}{{this.min}}, {{this.max}}{{else}}Integer.MIN_VALUE, Integer.MAX_VALUE{{/if}})'
+    long:
+      valueType: "{{@ConfigSpec}}.LongValue"
+      define: 'defineInRange("{{this.name}}", {{this.defaultLiteral}}L, {{#if this.hasRange}}{{this.min}}L, {{this.max}}L{{else}}Long.MIN_VALUE, Long.MAX_VALUE{{/if}})'
+    double:
+      valueType: "{{@ConfigSpec}}.DoubleValue"
+      define: 'defineInRange("{{this.name}}", {{this.defaultLiteral}}, {{#if this.hasRange}}{{this.min}}, {{this.max}}{{else}}-Double.MAX_VALUE, Double.MAX_VALUE{{/if}})'
+    bool:
+      valueType: "{{@ConfigSpec}}.BooleanValue"
+      define: 'define("{{this.name}}", {{this.defaultLiteral}})'
+    string:
+      valueType: "{{@ConfigSpec}}.ConfigValue<String>"
+      define: 'define("{{this.name}}", {{this.defaultLiteral}})'
+  events:
+    server_tick:
+      variants:
+        - requires: ["net.minecraftforge.event.TickEvent$ServerTickEvent$Post#BUS"]
+          register: "{{@ServerTickEventPost}}.BUS.addListener(ModEvents::{{params.handler}});"
+          method: |
+            private static void {{params.handler}}({{@ServerTickEventPost}} event) {
+                // End of every server tick (20 per second): keep it cheap.
+            }
+        - requires: ["net.minecraftforge.event.TickEvent$ServerTickEvent#phase"]
+          register: "{{@MinecraftForge}}.EVENT_BUS.addListener(ModEvents::{{params.handler}});"
+          method: |
+            private static void {{params.handler}}({{@ServerTickEvent}} event) {
+                if (event.phase != {{@TickPhase}}.END) return;
+                // End of every server tick (20 per second): keep it cheap.
+            }
+    server_started:
+      variants:
+        - requires: ["net.minecraftforge.event.server.ServerStartedEvent#getServer"]
+          register: "{{#if has.forgeEB7}}{{@ServerStartedEvent}}.BUS{{else}}{{@MinecraftForge}}.EVENT_BUS{{/if}}.addListener(ModEvents::{{params.handler}});"
+          method: |
+            private static void {{params.handler}}({{@ServerStartedEvent}} event) {
+                {{@Main}}.LOGGER.info("[{{modId}}] server started");
+            }
+    player_join:
+      variants:
+        - requires: ["net.minecraftforge.event.entity.player.PlayerEvent$PlayerLoggedInEvent#getEntity"]
+          register: "{{#if has.forgeEB7}}{{@PlayerLoggedInEvent}}.BUS{{else}}{{@MinecraftForge}}.EVENT_BUS{{/if}}.addListener(ModEvents::{{params.handler}});"
+          method: |
+            private static void {{params.handler}}({{@PlayerLoggedInEvent}} event) {
+                {{@Main}}.LOGGER.info("[{{modId}}] {} joined", event.getEntity().getName().getString());
+            }
+    block_break:
+      variants:
+        - requires: ["net.minecraftforge.event.level.BlockEvent$BreakEvent#BUS"]
+          register: "{{@BreakEvent}}.BUS.addListener(false, ModEvents::{{params.handler}});"
+          method: |
+            private static void {{params.handler}}({{@BreakEvent}} event) {
+                // React to the block being broken (event.getPos(), event.getState(), event.getPlayer()).
+            }
+        - requires: ["net.minecraftforge.event.level.BlockEvent$BreakEvent#getPlayer"]
+          register: "{{@MinecraftForge}}.EVENT_BUS.addListener(ModEvents::{{params.handler}});"
+          method: |
+            private static void {{params.handler}}({{@BreakEvent}} event) {
+                // React to the block being broken (event.getPos(), event.getState(), event.getPlayer()).
+            }
+    register_commands:
+      variants:
+        - requires: ["net.minecraftforge.event.RegisterCommandsEvent#getDispatcher", "net.minecraft.commands.CommandSourceStack#sendSuccess(Ljava/util/function/Supplier;Z)V"]
+          register: "{{#if has.forgeEB7}}{{@RegisterCommandsEvent}}.BUS{{else}}{{@MinecraftForge}}.EVENT_BUS{{/if}}.addListener(ModEvents::{{params.handler}});"
+          method: |
+            private static void {{params.handler}}({{@RegisterCommandsEvent}} event) {
+                event.getDispatcher().register({{@Commands}}.literal("{{modId}}").executes(context -> {
+                    context.getSource().sendSuccess(() -> {{@Component}}.literal("Hello from {{modId}}"), false);
+                    return 1;
+                }));
+            }
+  java:
+    id: |
+      public static {{@Id}} id(String path) {
+          return {{#if has.idCtor}}new {{@Id}}("{{modId}}", path){{else}}{{@Id}}.fromNamespaceAndPath("{{modId}}", path){{/if}};
+      }
+    distClient: "{{@FMLEnvironment}}.dist == {{@Dist}}.CLIENT"
+
+kinds:
+  _blocks_container:
+    ops:
+      - insert: "{{javaDir}}/registry/ModBlocks.java"
+        container: |
+          package {{package}}.registry;
+
+          /** Generated by FFN: blocks (DeferredRegister). */
+          public final class ModBlocks {
+              public static final {{@DeferredRegister}}<{{@Block}}> BLOCKS = {{@DeferredRegister}}.create({{@Registries}}.BLOCK, "{{modId}}");
+              // ffn:fields
+
+              private ModBlocks() {}
+
+              public static void register({{@ModBus}} bus) {
+                  BLOCKS.register(bus);
+              }
+
+              private static <T extends {{@Block}}> {{@Holder}}<T> register(String name, {{@Function}}<{{@BlockProps}}, T> factory, {{@BlockProps}} props, boolean withItem) {
+                  {{@Holder}}<T> block = BLOCKS.register(name, () -> factory.apply(props{{#if has.blockPropsSetId}}.setId({{@ResourceKey}}.create({{@Registries}}.BLOCK, ModItems.id(name))){{/if}}));
+                  if (withItem) ModItems.registerBlockItem(name, block);
+                  return block;
+              }
+          }
+      - hook: main
+        text: "{{@~.registry.ModBlocks}}.register({{modBus}});"
+      - include: _items_container
+
+  _items_container:
+    ops:
+      - insert: "{{javaDir}}/registry/ModItems.java"
+        container: |
+          package {{package}}.registry;
+
+          /** Generated by FFN: items (DeferredRegister). */
+          public final class ModItems {
+              public static final {{@DeferredRegister}}<{{@Item}}> ITEMS = {{@DeferredRegister}}.create({{@Registries}}.ITEM, "{{modId}}");
+              // ffn:fields
+
+              private ModItems() {}
+
+              public static void register({{@ModBus}} bus) {
+                  ITEMS.register(bus);
+              }
+
+          {{> tables.java.id}}
+              public static {{@Holder}}<{{@Item}}> registerBlockItem(String name, {{@Supplier}}<? extends {{@Block}}> block) {
+                  return register(name, props -> new {{@BlockItem}}(block.get(), props), new {{@ItemProps}}(){{#if has.itemBlockDescription}}.useBlockDescriptionPrefix(){{/if}});
+              }
+
+              public static <T extends {{@Item}}> {{@Holder}}<T> register(String name, {{@Function}}<{{@ItemProps}}, T> factory, {{@ItemProps}} props) {
+                  return ITEMS.register(name, () -> factory.apply(props{{#if has.itemPropsSetId}}.setId({{@ResourceKey}}.create({{@Registries}}.ITEM, id(name))){{/if}}));
+              }
+          }
+      - hook: main
+        text: "{{@~.registry.ModItems}}.register({{modBus}});"
+
+  _tab_entry:
+    ops:
+      - if: params.tab
+        insert: "{{javaDir}}/registry/ModCreativeTabs.java"
+        id: creative tab (generate kind=creative_tab first)
+        at:
+          - marker: "tab_{{params.tab}}"
+            text: 'output.accept({{#eq kind "item"}}ModItems{{else}}ModBlocks{{/eq}}.{{NAME}}.get());'
+
+  block:
+    description: "A simple block with its block item, blockstate, models, texture, loot table and translation"
+    ops:
+      - include: _blocks_container
+      - insert: "{{javaDir}}/registry/ModBlocks.java"
+        at:
+          - marker: fields
+            conflict: " {{NAME}} ="
+            text: |
+              public static final {{@Holder}}<{{@Block}}> {{NAME}} = register("{{name}}", {{@Block}}::new, {{@BlockProps}}.of().strength({{#if params.strength}}{{params.strength}}{{else}}1.5{{/if}}f){{#if params.lightLevel}}.lightLevel(state -> {{params.lightLevel}}){{/if}}, true);
+      - include: block_assets
+      - include: _tab_entry
+
+  item:
+    description: "A simple item with model, texture and translation"
+    ops:
+      - include: _items_container
+      - insert: "{{javaDir}}/registry/ModItems.java"
+        at:
+          - marker: fields
+            conflict: " {{NAME}} ="
+            text: |
+              public static final {{@Holder}}<{{@Item}}> {{NAME}} = register("{{name}}", {{@Item}}::new, new {{@ItemProps}}(){{#if params.stackSize}}.stacksTo({{params.stackSize}}){{/if}});
+      - include: item_assets
+      - include: _tab_entry
+
+  creative_tab:
+    description: "A creative mode tab listing items (params.items, params.icon); later blocks/items can join it with params.tab"
+    ops:
+      - insert: "{{javaDir}}/registry/ModCreativeTabs.java"
+        container: |
+          package {{package}}.registry;
+
+          /** Generated by FFN: creative mode tabs (DeferredRegister). */
+          public final class ModCreativeTabs {
+              public static final {{@DeferredRegister}}<{{@CreativeModeTab}}> TABS = {{@DeferredRegister}}.create({{@Registries}}.CREATIVE_MODE_TAB, "{{modId}}");
+              // ffn:fields
+
+              private ModCreativeTabs() {}
+
+              public static void register({{@ModBus}} bus) {
+                  TABS.register(bus);
+              }
+
+              private static {{@Item}} item(String id) {
+                  return {{@BuiltInRegistries}}.ITEM.{{#if has.registryGetValue}}getValue{{else}}get{{/if}}({{@Id}}.tryParse(id));
+              }
+          }
+        at:
+          - marker: fields
+            conflict: " {{NAME}} ="
+            text: |
+              public static final {{@Holder}}<{{@CreativeModeTab}}> {{NAME}} = TABS.register("{{name}}", () -> {{@CreativeModeTab}}.builder({{#unless has.tabBuilderNoArg}}{{@CreativeModeTab}}.Row.TOP, 0{{/unless}})
+                      .title({{@Component}}.translatable("itemGroup.{{modId}}.{{name}}"))
+                      .icon(() -> new {{@ItemStack}}(item("{{#if params.icon}}{{params.icon}}{{else}}minecraft:book{{/if}}")))
+                      .displayItems((parameters, output) -> {
+              {{#each params.items}}            output.accept(item("{{this.id}}"));
+              {{/each}}            // ffn:tab_{{name}}
+                      })
+                      .build());
+      - hook: main
+        text: "{{@~.registry.ModCreativeTabs}}.register({{modBus}});"
+      - lang: { "itemGroup.{{modId}}.{{name}}": "{{displayName}}" }
+
+  block_entity:
+    description: "A block with a ticking block entity that persists a counter"
+    ops:
+      - include: _blocks_container
+      - include: _be_classes
+      - insert: "{{javaDir}}/registry/ModBlocks.java"
+        at:
+          - marker: fields
+            conflict: " {{NAME}} ="
+            text: |
+              public static final {{@Holder}}<{{@Block}}> {{NAME}} = register("{{name}}", {{@~.block.[Name]Block}}::new, {{@BlockProps}}.of().strength(2.0f), true);
+      - insert: "{{javaDir}}/registry/ModBlockEntities.java"
+        container: |
+          package {{package}}.registry;
+
+          /** Generated by FFN: block entity types (DeferredRegister). */
+          public final class ModBlockEntities {
+              public static final {{@DeferredRegister}}<{{@BlockEntityType}}<?>> BLOCK_ENTITIES = {{@DeferredRegister}}.create({{@Registries}}.BLOCK_ENTITY_TYPE, "{{modId}}");
+              // ffn:fields
+
+              private ModBlockEntities() {}
+
+              public static void register({{@ModBus}} bus) {
+                  BLOCK_ENTITIES.register(bus);
+              }
+          }
+        at:
+          - marker: fields
+            conflict: " {{NAME}} ="
+            text: |
+              public static final {{@Holder}}<{{@BlockEntityType}}<{{@~.block.[Name]BlockEntity}}>> {{NAME}} = BLOCK_ENTITIES.register("{{name}}",
+                      () -> {{#if has.beTypeCtor}}new {{@BlockEntityType}}<>({{@~.block.[Name]BlockEntity}}::new, {{@Set}}.of(ModBlocks.{{NAME}}.get())){{else}}{{@BlockEntityType}}.Builder.of({{@~.block.[Name]BlockEntity}}::new, ModBlocks.{{NAME}}.get()).build(null){{/if}});
+      - hook: main
+        text: "{{@~.registry.ModBlockEntities}}.register({{modBus}});"
+      - include: block_assets
+      - include: _tab_entry
+
+  _client:
+    ops:
+      - insert: "{{javaDir}}/client/ModClient.java"
+        container: |
+          package {{package}}.client;
+
+          /** Generated by FFN: client-only setup; only called on the physical client. */
+          public final class ModClient {
+              private ModClient() {}
+
+              public static void register({{@ModBus}} bus) {
+                  {{#if has.forgeEB7}}{{@RegisterRenderers}}.BUS.addListener(ModClient::onRegisterRenderers);{{else}}bus.addListener(ModClient::onRegisterRenderers);{{/if}}
+              }
+
+              private static void onRegisterRenderers({{@RegisterRenderers}} event) {
+                  // ffn:renderers
+              }
+          }
+      - hook: main
+        text: "if ({{> tables.java.distClient}}) {{@~.client.ModClient}}.register({{modBus}});"
+
+  entity:
+    description: "A PathfinderMob with goals, attributes (EntityAttributeCreationEvent) and a placeholder renderer"
+    ops:
+      - include: _entity_class
+      - insert: "{{javaDir}}/registry/ModEntities.java"
+        container: |
+          package {{package}}.registry;
+
+          /** Generated by FFN: entity types (DeferredRegister) and their attributes. */
+          public final class ModEntities {
+              public static final {{@DeferredRegister}}<{{@EntityType}}<?>> ENTITIES = {{@DeferredRegister}}.create({{@Registries}}.ENTITY_TYPE, "{{modId}}");
+              // ffn:fields
+
+              private ModEntities() {}
+
+              public static void register({{@ModBus}} bus) {
+                  ENTITIES.register(bus);
+                  {{#if has.forgeEB7}}{{@EntityAttributeCreationEvent}}.BUS.addListener(ModEntities::onAttributes);{{else}}bus.addListener(ModEntities::onAttributes);{{/if}}
+              }
+
+              private static void onAttributes({{@EntityAttributeCreationEvent}} event) {
+                  // ffn:attributes
+              }
+
+              private static <T extends {{@Entity}}> {{@EntityType}}<T> build(String name, {{@EntityType}}.Builder<T> builder) {
+                  {{#if has.entityBuildKey}}return builder.build({{@ResourceKey}}.create({{@Registries}}.ENTITY_TYPE, ModItems.id(name)));{{else}}return builder.build("{{modId}}:" + name);{{/if}}
+              }
+          }
+        at:
+          - marker: fields
+            conflict: " {{NAME}} ="
+            text: |
+              public static final {{@Holder}}<{{@EntityType}}<{{@~.entity.[Name]Entity}}>> {{NAME}} = ENTITIES.register("{{name}}", () -> build("{{name}}",
+                      {{@EntityType}}.Builder.of({{@~.entity.[Name]Entity}}::new, {{@MobCategory}}.{{#if params.category}}{{params.category}}{{else}}CREATURE{{/if}}).sized({{#if params.width}}{{params.width}}{{else}}0.6{{/if}}f, {{#if params.height}}{{params.height}}{{else}}0.9{{/if}}f)));
+          - marker: attributes
+            text: "event.put({{NAME}}.get(), {{@~.entity.[Name]Entity}}.createAttributes().build());"
+      - include: _items_container
+      - hook: main
+        text: "{{@~.registry.ModEntities}}.register({{modBus}});"
+      - include: _client
+      - insert: "{{javaDir}}/client/ModClient.java"
+        at:
+          - marker: renderers
+            text: "event.registerEntityRenderer({{@~.registry.ModEntities}}.{{NAME}}.get(), {{@NoopRenderer}}::new);"
+      - lang: { "entity.{{modId}}.{{name}}": "{{displayName}}" }
+      - note: "The entity uses NoopRenderer (invisible) as a placeholder: replace it with a renderer + model. Spawn it with /summon {{id}}."
+
+  networking:
+    description: "A packet on a SimpleChannel with encoder/decoder, a main-thread handler and send helpers"
+    ops:
+      - include: payload_record_buf
+      - insert: "{{javaDir}}/network/ModNetworking.java"
+        container: |
+          package {{package}}.network;
+
+          /** Generated by FFN: a SimpleChannel and its messages. */
+          public final class ModNetworking {
+          {{#if has.forgeChannelBuilder}}    public static final {{@SimpleChannel}} CHANNEL = {{@ChannelBuilder}}.named(id("main")).networkProtocolVersion(1).simpleChannel();
+          {{else}}    private static final String PROTOCOL = "1";
+              public static final {{@SimpleChannel}} CHANNEL = {{@NetworkRegistry}}.newSimpleChannel(id("main"), () -> PROTOCOL, PROTOCOL::equals, PROTOCOL::equals);
+              private static int nextId = 0;
+          {{/if}}
+              private ModNetworking() {}
+
+          {{> tables.java.id}}
+              /** Registers all messages; called from the mod constructor. */
+              public static void register() {
+                  // ffn:register
+              }
+
+              // ffn:methods
+          }
+        at:
+          - marker: register
+            unlessPresent: "messageBuilder({{Name}}Payload.class"
+            text: |
+              CHANNEL.messageBuilder({{Name}}Payload.class, {{#unless has.forgeChannelBuilder}}nextId++, {{/unless}}{{@NetworkDirection}}.{{#if params.toServer}}PLAY_TO_SERVER{{else}}PLAY_TO_CLIENT{{/if}})
+                      .encoder({{Name}}Payload::write)
+                      .decoder({{Name}}Payload::read)
+                      .consumerMainThread((msg, ctx) -> {{#if params.toServer}}handle{{Name}}(msg, ctx{{#unless has.forgeChannelBuilder}}.get(){{/unless}}.getSender()){{else}}{{@Main}}.LOGGER.info("[{{modId}}] received {}", msg){{/if}})
+                      .add();
+          - marker: methods
+            if: params.toServer
+            text: |
+              /** Runs on the server thread when a client sends {{Name}}Payload. Validate everything: clients can send anything. */
+              private static void handle{{Name}}({{Name}}Payload payload, {{@ServerPlayer}} player) {
+                  if (player == null) return;
+                  {{@Main}}.LOGGER.info("[{{modId}}] {} sent {}", player.getName().getString(), payload);
+              }
+
+              /** Client side: send {{Name}}Payload to the server. */
+              public static void send{{Name}}ToServer({{Name}}Payload payload) {
+                  {{#if has.forgeChannelBuilder}}CHANNEL.send(payload, {{@PacketDistributor}}.SERVER.noArg());{{else}}CHANNEL.sendToServer(payload);{{/if}}
+              }
+
+          - marker: methods
+            if: params.toClient
+            text: |
+              /** Server side: send {{Name}}Payload to one player. */
+              public static void send{{Name}}({{@ServerPlayer}} player, {{Name}}Payload payload) {
+                  {{#if has.forgeChannelBuilder}}CHANNEL.send(payload, {{@PacketDistributor}}.PLAYER.with(player));{{else}}CHANNEL.send({{@PacketDistributor}}.PLAYER.with(() -> player), payload);{{/if}}
+              }
+
+      - if: "params.toServer && params.toClient"
+        warn: "direction=both registers the message once per direction is not supported by SimpleChannel messageBuilder; registered as to_server. Generate a second message for server→client."
+      - hook: main
+        text: "{{@~.network.ModNetworking}}.register();"
+
+  config:
+    description: "A ForgeConfigSpec config registered with the mod loading context"
+    ops:
+      - write: "{{javaDir}}/config/Mod{{params.ConfigType}}Config.java"
+        template: |
+          package {{package}}.config;
+
+          /** Generated by FFN: {{params.configType}} config (config/{{modId}}-{{params.configType}}.toml). Read values with NAME.get(). */
+          public final class Mod{{params.ConfigType}}Config {
+              private static final {{@ConfigSpec}}.Builder BUILDER = new {{@ConfigSpec}}.Builder();
+
+          {{#each params.entries}}    public static final {{> this.valueType}} {{this.NAME}} = BUILDER.comment("{{this.comment}}").{{> this.define}};
+          {{/each}}
+              public static final {{@ConfigSpec}} SPEC = BUILDER.build();
+
+              private Mod{{params.ConfigType}}Config() {}
+          }
+      - hook: main
+        text: "{{@ModLoadingContext}}.get().registerConfig({{@ModConfig}}.Type.{{params.CONFIG_TYPE}}, {{@~.config.Mod[params.ConfigType]Config}}.SPEC);"
+
+  event_handler:
+    description: "Register a handler for a common game event (params.event)"
+    ops:
+      - insert: "{{javaDir}}/event/ModEvents.java"
+        container: |
+          package {{package}}.event;
+
+          /** Generated by FFN: game event handlers. */
+          public final class ModEvents {
+              private ModEvents() {}
+
+              public static void register() {
+                  // ffn:register
+              }
+
+              // ffn:methods
+          }
+        at:
+          - marker: register
+            conflict: "ModEvents::{{params.handler}})"
+            text: "{{> ev.register}}"
+          - marker: methods
+            unlessPresent: "void {{params.handler}}("
+            text: |
+              {{> ev.method}}
+      - hook: main
+        text: "{{@~.event.ModEvents}}.register();"
+
+  datagen:
+    description: "GatherDataEvent listener with an example language provider"
+    ops:
+      - write: "{{javaDir}}/datagen/ModDataGen.java"
+        template: |
+          package {{package}}.datagen;
+
+          /** Generated by FFN: data generation entry point (mod bus GatherDataEvent). */
+          public final class ModDataGen {
+              private ModDataGen() {}
+
+              public static void register({{@ModBus}} bus) {
+                  {{#if has.gatherStaticBus}}{{@GatherDataEvent}}.BUS.addListener(ModDataGen::gather);{{else}}{{#if has.forgeEB7}}{{@GatherDataEvent}}.getBus(bus).addListener(ModDataGen::gather);{{else}}bus.addListener(ModDataGen::gather);{{/if}}{{/if}}
+              }
+
+              private static void gather({{@GatherDataEvent}} event) {
+                  event.getGenerator().addProvider(event.includeClient(), new ModLangProvider(event.getGenerator().getPackOutput()));
+              }
+          }
+      - write: "{{javaDir}}/datagen/ModLangProvider.java"
+        template: |
+          package {{package}}.datagen;
+
+          /** Generated by FFN: an example data provider (en_us translations). */
+          public class ModLangProvider extends {{@LanguageProvider}} {
+              public ModLangProvider({{@PackOutput}} output) {
+                  super(output, "{{modId}}", "en_us");
+              }
+
+              @Override
+              protected void addTranslations() {
+                  add("{{modId}}.datagen.example", "Generated by FFN datagen");
+              }
+          }
+      - hook: main
+        text: "{{@~.datagen.ModDataGen}}.register({{modBus}});"
+      - note: "Add a data run to build.gradle (ForgeGradle: runs { data { args '--mod', '{{modId}}', '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/') } }; ModDevGradle: runs { data { data() } }) and add src/generated/resources to the main resources."
