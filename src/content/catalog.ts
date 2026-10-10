@@ -36,6 +36,7 @@ export const OpSchema = z
     at: z
       .array(
         z.object({
+          if: Str.optional(),
           marker: Str,
           text: Str,
           /** Skip when this (rendered) text is already in the file. Defaults to the rendered text itself. */

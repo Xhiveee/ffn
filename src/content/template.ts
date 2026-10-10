@@ -98,7 +98,15 @@ function truthy(v: unknown): boolean {
 function run(nodes: Node[], scopes: unknown[], ctx: RenderContext, out: string[]): void {
   for (const n of nodes) {
     if (n.t === "text") out.push(n.v);
-    else if (n.t === "type") out.push(ctx.type(n.name));
+    else if (n.t === "type") {
+      // [var] inside a class reference interpolates a value: {{@~.block.[Name]Block}}
+      const nm = n.name.replace(/\[([\w.@]+)\]/g, (_, p: string) => {
+        const v = lookup(scopes, p);
+        if (v === undefined || v === null) throw new TemplateError(`Template value "${p}" is not defined`);
+        return String(v);
+      });
+      out.push(ctx.type(nm));
+    }
     else if (n.t === "partial") {
       const v = lookup(scopes, n.path);
       if (typeof v !== "string") throw new TemplateError(`Partial "${n.path}" is not a template string`);

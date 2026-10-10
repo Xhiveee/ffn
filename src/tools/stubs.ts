@@ -18,19 +18,6 @@ const anyMappings = z.enum(["mojmap", "parchment", "yarn", "intermediary", "srg"
 
 export const STUBS: StubSpec[] = [
   {
-    name: "generate",
-    title: "Generate content",
-    description: "Generate version-correct boilerplate in a project: blocks, items, entities, block entities, recipes, datapack files, event listeners, commands, configs, creative tabs, network payloads.",
-    milestone: "M3 (content generators)",
-    meanwhile: "Follow the loader docs for the project's Minecraft version (see get_profile → references).",
-    input: {
-      projectDir,
-      kind: z.enum(["block", "item", "entity", "block_entity", "recipe", "datapack", "event_listener", "command", "config", "creative_tab", "network_payload"]),
-      name: z.string(),
-      options: z.record(z.string(), z.unknown()).optional(),
-    },
-  },
-  {
     name: "mixin_port",
     title: "Port mixins",
     description: "When porting between versions, find mixins whose target disappeared or changed and propose new targets.",

@@ -286,6 +286,7 @@ export async function planContent(services: Services, req: GenerateRequest, onPr
   const idOf = (s: string) => (s.includes(":") ? s : `${modId}:${s}`);
 
   const ctx: Record<string, unknown> = {
+    kind: req.kind,
     loader,
     mcVersion: mc,
     modId,
@@ -422,6 +423,7 @@ export async function planContent(services: Services, req: GenerateRequest, onPr
         }
         const allImports: string[] = [];
         for (const at of op.at ?? []) {
+          if (at.if && !evalCondition(at.if, ctx)) continue;
           const { text, imports } = r(at.text, file, content);
           if (at.conflict) {
             const c = plain(at.conflict);
@@ -616,7 +618,7 @@ function normaliseParams(kind: string, p: Record<string, unknown>, ctx: Record<s
     p.fields = fields.map((f, i) => {
       const t = table[f.type];
       if (!t) errors.push(`Unknown payload field type "${f.type}". Known: ${Object.keys(table).join(", ")}.`);
-      return { name: f.name, Name: pascal(f.name), type: f.type, ...(t ?? {}), last: i === fields.length - 1, first: i === 0 };
+      return { name: f.name, FieldName: pascal(f.name), type: f.type, ...(t ?? {}), last: i === fields.length - 1, first: i === 0 };
     });
     const dir = String(p.direction ?? "to_server");
     if (!["to_server", "to_client", "both"].includes(dir)) errors.push(`direction must be to_server, to_client or both.`);
@@ -650,6 +652,7 @@ function normaliseParams(kind: string, p: Record<string, unknown>, ctx: Record<s
       };
     });
     p.configType = String(p.configType ?? "common");
+    p.ConfigType = pascal(String(p.configType));
     p.CONFIG_TYPE = String(p.configType).toUpperCase();
   }
   if (kind === "event_handler") {

@@ -1,0 +1,242 @@
+# FFN content catalog — shared by all loaders: data/asset formats and vanilla-only probes.
+# Templates use a tiny language (see src/content/template.ts): {{value}}, {{@ClassAlias}}, {{#if}}, {{#each}}, {{> partial}}.
+# Version differences are expressed as rules (data formats) or probes (symbols that exist on the project's classpath).
+loader: common
+
+rules:
+  - since: "1.20.1"
+    description: 1.20.x data pack layout and recipe JSON
+    set:
+      dataDirs: { recipe: recipes, lootTable: loot_tables }
+      tagDirs: { block: tags/blocks, item: tags/items, entity_type: tags/entity_types, fluid: tags/fluids }
+      recipeResult: item          # {"item": "..."}
+      cookingResult: string       # "result": "minecraft:x"
+      ingredientStyle: object     # {"item": "..."} / {"tag": "..."}
+      itemModelDefinitions: false
+  - since: "1.20.5"
+    description: Item stacks in recipe results use "id" (data components)
+    set: { recipeResult: id, cookingResult: id }
+  - since: "1.21"
+    description: Singular data pack folder names
+    set:
+      dataDirs: { recipe: recipe, lootTable: loot_table }
+      tagDirs: { block: tags/block, item: tags/item, entity_type: tags/entity_type, fluid: tags/fluid }
+  - since: "1.21.2"
+    description: Ingredients are plain item ids / #tags
+    set: { ingredientStyle: string }
+  - since: "1.21.4"
+    description: Item model definitions in assets/<ns>/items/
+    set: { itemModelDefinitions: true }
+
+symbols:
+  Id: [net.minecraft.resources.Identifier, net.minecraft.resources.ResourceLocation]
+  ResourceKey: net.minecraft.resources.ResourceKey
+  Registries: net.minecraft.core.registries.Registries
+  BuiltInRegistries: net.minecraft.core.registries.BuiltInRegistries
+  Registry: net.minecraft.core.Registry
+  Block: net.minecraft.world.level.block.Block
+  BlockProps: net.minecraft.world.level.block.state.BlockBehaviour$Properties
+  BlockState: net.minecraft.world.level.block.state.BlockState
+  BlockPos: net.minecraft.core.BlockPos
+  EntityBlock: net.minecraft.world.level.block.EntityBlock
+  BlockEntity: net.minecraft.world.level.block.entity.BlockEntity
+  BlockEntityType: net.minecraft.world.level.block.entity.BlockEntityType
+  BlockEntityTicker: net.minecraft.world.level.block.entity.BlockEntityTicker
+  Item: net.minecraft.world.item.Item
+  ItemProps: net.minecraft.world.item.Item$Properties
+  BlockItem: net.minecraft.world.item.BlockItem
+  ItemStack: net.minecraft.world.item.ItemStack
+  CreativeModeTab: net.minecraft.world.item.CreativeModeTab
+  Component: net.minecraft.network.chat.Component
+  Level: net.minecraft.world.level.Level
+  Entity: net.minecraft.world.entity.Entity
+  EntityType: net.minecraft.world.entity.EntityType
+  MobCategory: net.minecraft.world.entity.MobCategory
+  PathfinderMob: net.minecraft.world.entity.PathfinderMob
+  Mob: net.minecraft.world.entity.Mob
+  Player: net.minecraft.world.entity.player.Player
+  ServerPlayer: net.minecraft.server.level.ServerPlayer
+  MinecraftServer: net.minecraft.server.MinecraftServer
+  AttributeSupplier: net.minecraft.world.entity.ai.attributes.AttributeSupplier
+  Attributes: net.minecraft.world.entity.ai.attributes.Attributes
+  FloatGoal: net.minecraft.world.entity.ai.goal.FloatGoal
+  RandomStrollGoal: net.minecraft.world.entity.ai.goal.RandomStrollGoal
+  LookAtPlayerGoal: net.minecraft.world.entity.ai.goal.LookAtPlayerGoal
+  RandomLookAroundGoal: net.minecraft.world.entity.ai.goal.RandomLookAroundGoal
+  NoopRenderer: net.minecraft.client.renderer.entity.NoopRenderer
+  CompoundTag: net.minecraft.nbt.CompoundTag
+  HolderLookup: net.minecraft.core.HolderLookup
+  ValueInput: net.minecraft.world.level.storage.ValueInput
+  ValueOutput: net.minecraft.world.level.storage.ValueOutput
+  FriendlyByteBuf: net.minecraft.network.FriendlyByteBuf
+  RegistryFriendlyByteBuf: net.minecraft.network.RegistryFriendlyByteBuf
+  CustomPacketPayload: net.minecraft.network.protocol.common.custom.CustomPacketPayload
+  StreamCodec: net.minecraft.network.codec.StreamCodec
+  ByteBufCodecs: net.minecraft.network.codec.ByteBufCodecs
+  Commands: net.minecraft.commands.Commands
+  CommandSourceStack: net.minecraft.commands.CommandSourceStack
+  CommandDispatcher: com.mojang.brigadier.CommandDispatcher
+  Function: java.util.function.Function
+  Supplier: java.util.function.Supplier
+  Set: java.util.Set
+
+probes:
+  # ResourceLocation(String, String) is public up to 1.20.6; 1.21+ uses fromNamespaceAndPath; 1.21.11+ renames it Identifier.
+  idCtor: "net.minecraft.resources.ResourceLocation#<init>(Ljava/lang/String;Ljava/lang/String;)V"
+  # 1.21.2+: Block/Item properties must carry their registry key.
+  blockPropsSetId: "net.minecraft.world.level.block.state.BlockBehaviour$Properties#setId("
+  itemPropsSetId: "net.minecraft.world.item.Item$Properties#setId("
+  itemBlockDescription: "net.minecraft.world.item.Item$Properties#useBlockDescriptionPrefix("
+  # Block entity persistence: ValueInput/ValueOutput (1.21.6+), CompoundTag + HolderLookup (1.20.5+), CompoundTag (≤1.20.4)
+  beValueIO: "net.minecraft.world.level.block.entity.BlockEntity#saveAdditional(Lnet/minecraft/world/level/storage/ValueOutput;"
+  beLookup: "net.minecraft.world.level.block.entity.BlockEntity#saveAdditional(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/core/HolderLookup$Provider;"
+  beTypeCtor: "net.minecraft.world.level.block.entity.BlockEntityType#<init>(Lnet/minecraft/world/level/block/entity/BlockEntityType$BlockEntitySupplier;Ljava/util/Set;)V"
+  entityBuildKey: "net.minecraft.world.entity.EntityType$Builder#build(Lnet/minecraft/resources/ResourceKey;"
+  keyIdentifier: "net.minecraft.resources.ResourceKey#identifier()"
+  registryGetValue: "net.minecraft.core.Registry#getValue("
+  # 1.20.5+: custom payloads with StreamCodec
+  payloads: ["net.minecraft.network.protocol.common.custom.CustomPacketPayload$Type", "net.minecraft.network.codec.StreamCodec"]
+  levelIsClientSideMethod: "net.minecraft.world.level.Level#isClientSide()Z"
+
+tables:
+  # Payload/packet field types: codec for StreamCodec payloads, FriendlyByteBuf methods for legacy packets.
+  fieldTypes:
+    int: { java: int, bb: VAR_INT, write: writeVarInt, read: readVarInt }
+    long: { java: long, bb: VAR_LONG, write: writeVarLong, read: readVarLong }
+    float: { java: float, bb: FLOAT, write: writeFloat, read: readFloat }
+    double: { java: double, bb: DOUBLE, write: writeDouble, read: readDouble }
+    bool: { java: boolean, bb: BOOL, write: writeBoolean, read: readBoolean }
+    string: { java: String, bb: STRING_UTF8, write: writeUtf, read: readUtf }
+    blockpos: { java: net.minecraft.core.BlockPos, full: net.minecraft.core.BlockPos.STREAM_CODEC, write: writeBlockPos, read: readBlockPos }
+  # Reusable JSON fragments (rendered with {{> tables.json.x}})
+  json:
+    ingredient: '{{#eq settings.ingredientStyle "string"}}"{{this.raw}}"{{else}}{{#if this.tag}}{"tag": "{{this.id}}"}{{else}}{"item": "{{this.id}}"}{{/if}}{{/eq}}'
+
+kinds:
+  # ---------- shared assets/data (included by loader kinds) ----------
+  block_assets:
+    description: "[common] blockstate, models, item model, texture, loot table, lang for a simple block"
+    ops:
+      - json: "{{assets}}/blockstates/{{name}}.json"
+        merge: '{"variants": {"": {"model": "{{modId}}:block/{{name}}"}}}'
+      - json: "{{assets}}/models/block/{{name}}.json"
+        merge: '{"parent": "minecraft:block/cube_all", "textures": {"all": "{{modId}}:block/{{name}}"}}'
+      - json: "{{assets}}/models/item/{{name}}.json"
+        merge: '{"parent": "{{modId}}:block/{{name}}"}'
+      - if: settings.itemModelDefinitions
+        json: "{{assets}}/items/{{name}}.json"
+        merge: '{"model": {"type": "minecraft:model", "model": "{{modId}}:block/{{name}}"}}'
+      - texture: "{{assets}}/textures/block/{{name}}.png"
+        color: "{{#if params.color}}{{params.color}}{{else}}#7a8b99{{/if}}"
+      - unless: params.noDrop
+        json: "{{data}}/{{settings.dataDirs.lootTable}}/blocks/{{name}}.json"
+        merge: |
+          {"type": "minecraft:block", "pools": [{"rolls": 1, "entries": [{"type": "minecraft:item", "name": "{{id}}"}], "conditions": [{"condition": "minecraft:survives_explosion"}]}]}
+      - lang: { "block.{{modId}}.{{name}}": "{{displayName}}" }
+
+  item_assets:
+    description: "[common] item model, texture, lang"
+    ops:
+      - json: "{{assets}}/models/item/{{name}}.json"
+        merge: '{"parent": "minecraft:item/generated", "textures": {"layer0": "{{modId}}:item/{{name}}"}}'
+      - if: settings.itemModelDefinitions
+        json: "{{assets}}/items/{{name}}.json"
+        merge: '{"model": {"type": "minecraft:model", "model": "{{modId}}:item/{{name}}"}}'
+      - texture: "{{assets}}/textures/item/{{name}}.png"
+        color: "{{#if params.color}}{{params.color}}{{else}}#c9a227{{/if}}"
+      - lang: { "item.{{modId}}.{{name}}": "{{displayName}}" }
+
+  recipe:
+    description: "Recipe JSON (shaped, shapeless, smelting/blasting/smoking/campfire_cooking) in the version's format"
+    ops:
+      - if: params.isShaped
+        write: "{{data}}/{{settings.dataDirs.recipe}}/{{name}}.json"
+        template: |
+          {
+            "type": "minecraft:crafting_shaped",
+            "category": "misc",
+            "pattern": [{{#each params.pattern}}"{{this.row}}"{{#unless this.last}}, {{/unless}}{{/each}}],
+            "key": { {{#each params.keys}}"{{this.char}}": {{> tables.json.ingredient}}{{#unless this.last}}, {{/unless}}{{/each}} },
+            "result": {{#eq settings.recipeResult "id"}}{"id": "{{params.result}}", "count": {{params.count}}}{{else}}{"item": "{{params.result}}", "count": {{params.count}}}{{/eq}}
+          }
+      - if: params.isShapeless
+        write: "{{data}}/{{settings.dataDirs.recipe}}/{{name}}.json"
+        template: |
+          {
+            "type": "minecraft:crafting_shapeless",
+            "category": "misc",
+            "ingredients": [{{#each params.ingredients}}{{> tables.json.ingredient}}{{#unless this.last}}, {{/unless}}{{/each}}],
+            "result": {{#eq settings.recipeResult "id"}}{"id": "{{params.result}}", "count": {{params.count}}}{{else}}{"item": "{{params.result}}", "count": {{params.count}}}{{/eq}}
+          }
+      - if: params.isCooking
+        write: "{{data}}/{{settings.dataDirs.recipe}}/{{name}}.json"
+        template: |
+          {
+            "type": "minecraft:{{params.type}}",
+            "category": "misc",
+            "ingredient": {{#eq settings.ingredientStyle "string"}}"{{params.ingredient.raw}}"{{else}}{{#if params.ingredient.tag}}{"tag": "{{params.ingredient.id}}"}{{else}}{"item": "{{params.ingredient.id}}"}{{/if}}{{/eq}},
+            "result": {{#eq settings.cookingResult "id"}}{"id": "{{params.result}}"}{{else}}"{{params.result}}"{{/eq}},
+            "experience": {{params.experience}},
+            "cookingtime": {{params.cookingTime}}
+          }
+
+  loot_table:
+    description: "Loot table: a block dropping an item (lootType=block) or an entity drop table (lootType=entity)"
+    ops:
+      - if: params.lootType
+        write: "{{data}}/{{settings.dataDirs.lootTable}}/{{#eq params.lootType \"entity\"}}entities{{else}}blocks{{/eq}}/{{name}}.json"
+        template: |
+          {
+            "type": "minecraft:{{params.lootType}}",
+            "pools": [
+              {
+                "rolls": 1,
+                "entries": [{"type": "minecraft:item", "name": "{{params.drop}}"}]{{#eq params.lootType "block"}},
+                "conditions": [{"condition": "minecraft:survives_explosion"}]{{/eq}}
+              }
+            ]
+          }
+
+  tag:
+    description: "Tag JSON (registry: block | item | entity_type | fluid); tag may be namespaced (minecraft:logs) to extend vanilla tags"
+    ops:
+      - json: "{{dataRoot}}/{{params.namespace}}/{{params.dir}}/{{params.path}}.json"
+        merge: '{"replace": {{params.replace}}, "values": [{{#each params.values}}"{{this.value}}"{{#unless this.last}}, {{/unless}}{{/each}}]}'
+
+  networking_payload_class:
+    description: "[common] the payload/packet record"
+    ops:
+      - if: has.payloads
+        write: "{{javaDir}}/network/{{Name}}Payload.java"
+        template: |
+          package {{package}}.network;
+
+          /** Generated by FFN: a custom payload ({{params.direction}}). */
+          public record {{Name}}Payload({{#each params.fields}}{{this.java}} {{this.name}}{{#unless this.last}}, {{/unless}}{{/each}}) implements {{@CustomPacketPayload}} {
+              public static final {{@CustomPacketPayload}}.Type<{{Name}}Payload> TYPE = new {{@CustomPacketPayload}}.Type<>({{@~.network.ModNetworking}}.id("{{name}}"));
+              public static final {{@StreamCodec}}<{{@RegistryFriendlyByteBuf}}, {{Name}}Payload> CODEC = {{@StreamCodec}}.composite(
+          {{#each params.fields}}            {{#if this.bb}}{{@ByteBufCodecs}}.{{this.bb}}{{else}}{{this.full}}{{/if}}, {{Name}}Payload::{{this.name}},
+          {{/each}}            {{Name}}Payload::new);
+
+              @Override
+              public {{@CustomPacketPayload}}.Type<? extends {{@CustomPacketPayload}}> type() {
+                  return TYPE;
+              }
+          }
+      - unless: has.payloads
+        write: "{{javaDir}}/network/{{Name}}Payload.java"
+        template: |
+          package {{package}}.network;
+
+          /** Generated by FFN: a packet ({{params.direction}}) serialised with FriendlyByteBuf. */
+          public record {{Name}}Payload({{#each params.fields}}{{this.java}} {{this.name}}{{#unless this.last}}, {{/unless}}{{/each}}) {
+              public static final {{@Id}} ID = {{@~.network.ModNetworking}}.id("{{name}}");
+
+              public void write({{@FriendlyByteBuf}} buf) {
+          {{#each params.fields}}        buf.{{this.write}}({{this.name}});
+          {{/each}}    }
+
+              public static {{Name}}Payload read({{@FriendlyByteBuf}} buf) {
+                  return new {{Name}}Payload({{#each params.fields}}buf.{{this.read}}(){{#unless this.last}}, {{/unless}}{{/each}});
+              }
+          }
