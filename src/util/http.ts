@@ -77,7 +77,7 @@ export class CachingFetcher implements Fetcher {
     const ttl = o.ttlMs ?? this.opts.defaultTtlMs;
     const cached = await this.readCache(url);
     const now = Date.now();
-    if (cached && (this.opts.offline || now - cached.fetchedAt <= ttl)) {
+    if (cached && (this.opts.offline || now - cached.fetchedAt < ttl)) {
       return { body: cached.body, source: "cache", fetchedAt: cached.fetchedAt };
     }
     if (this.opts.offline) {

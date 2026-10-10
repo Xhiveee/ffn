@@ -1,3 +1,5 @@
+import { compilerNames, describeCompiler, groupCompilerMessages, parseCompilerOutput, type CompilerGroup } from "./compiler.js";
+
 /**
  * Structured diagnosis of Gradle output, Minecraft logs (latest.log / debug.log) and crash reports.
  * Pure text → findings; no version-specific knowledge beyond message formats of the tools involved
@@ -30,13 +32,15 @@ export interface Finding {
   file?: string;
   line?: number;
   mod?: string;
+  /** Same error at further places (compiler errors), capped. */
+  also?: string[];
   /** The log line(s) this came from. */
   evidence?: string;
   suggestion?: string;
 }
 
 export interface Diagnosis {
-  source: "crash-report" | "minecraft-log" | "gradle" | "unknown";
+  source: "crash-report" | "minecraft-log" | "gradle" | "maven" | "unknown";
   summary: string;
   findings: Finding[];
   culprit?: { mod: string; confidence: "high" | "medium" | "low"; reasons: string[] };
@@ -59,6 +63,7 @@ function push(list: Finding[], f: Finding): void {
 
 export function detectSource(text: string): Diagnosis["source"] {
   if (/---- Minecraft Crash Report ----/.test(text)) return "crash-report";
+  if (/\[INFO\] (?:BUILD|Building|Scanning for projects)|\[ERROR\] Failed to execute goal|\[ERROR\] COMPILATION ERROR/.test(text)) return "maven";
   if (/\* What went wrong:|> Task :|BUILD (FAILED|SUCCESSFUL)|Gradle \d/.test(text)) return "gradle";
   if (/\[(main|Render thread|Server thread)\/(INFO|WARN|ERROR|DEBUG)\]/.test(text) || /\[\d\d:\d\d:\d\d\]/.test(text)) return "minecraft-log";
   return "unknown";
@@ -68,33 +73,25 @@ export function diagnose(text: string): Diagnosis {
   const lines = text.split(/\r?\n/);
   const findings: Finding[] = [];
   const source = detectSource(text);
+  const compiler = parseCompilerOutput(lines);
+  for (const g of groupCompilerMessages(compiler.messages)) {
+    findings.push({
+      kind: g.severity === "error" ? "compile_error" : "compile_warning",
+      severity: g.severity,
+      file: g.file,
+      line: g.line,
+      message: describeCompiler(g),
+      ...(g.also.length ? { also: g.also } : {}),
+      suggestion: g.severity === "error" ? compilerHint(g) : undefined,
+    });
+  }
+  const compileErrors = findings.some((f) => f.kind === "compile_error");
 
   for (let i = 0; i < lines.length; i++) {
+    if (compiler.consumed.has(i)) continue;
     const line = lines[i]!;
     let m: RegExpExecArray | null;
 
-    // ---- javac ----
-    if ((m = /^(.*?\.(?:java|kt)):(\d+):(?:(\d+):)? (error|warning): (.+)$/.exec(line))) {
-      const details: string[] = [];
-      for (let j = i + 1; j < Math.min(lines.length, i + 6); j++) {
-        const d = lines[j]!;
-        if (/^\s*(symbol|location):/.test(d)) details.push(d.trim());
-        if (/\.(java|kt):\d+:/.test(d)) break;
-      }
-      const isErr = m[4] === "error";
-      push(findings, {
-        kind: isErr ? "compile_error" : "compile_warning",
-        severity: isErr ? "error" : "warning",
-        file: m[1],
-        line: Number(m[2]),
-        message: m[5]! + (details.length ? ` (${details.join("; ")})` : ""),
-        evidence: line,
-        suggestion: /cannot find symbol|does not exist/.test(m[5]!)
-          ? "The name may differ in this Minecraft version or mapping set. Use search_mc_source / get_class to find the current name."
-          : undefined,
-      });
-      continue;
-    }
     // Mixin annotation processor (compile time)
     if ((m = /(?:warning|error): (?:\[\w+\] )?Unable to locate obfuscation mapping for (@\w+) target (.+)$/.exec(line)) || (m = /Unable to locate obfuscation mapping for (@\w+) target (\S+)/.exec(line))) {
       push(findings, {
@@ -187,7 +184,9 @@ export function diagnose(text: string): Diagnosis {
     }
     if (/^\* What went wrong:/.test(line)) {
       const block: string[] = [];
-      for (let j = i + 1; j < lines.length && !/^\* (Try|Exception is):/.test(lines[j]!); j++) if (lines[j]!.trim()) block.push(lines[j]!.trim());
+      for (let j = i + 1; j < lines.length && !/^\* (Try|Exception is):/.test(lines[j]!); j++) if (lines[j]!.trim() && !compiler.consumed.has(j)) block.push(lines[j]!.trim());
+      // "Execution failed for task ':compileJava'. > Compilation failed…" adds nothing to the compiler errors above
+      if (compileErrors && /compil/i.test(block.slice(0, 2).join(" "))) continue;
       push(findings, { kind: "gradle_failure", severity: "error", message: block.slice(0, 6).join(" ").slice(0, 600), evidence: block[0] });
       continue;
     }
@@ -379,4 +378,54 @@ export function findCulprit(text: string, findings: Finding[]): Diagnosis["culpr
   if (!best) return undefined;
   const [mod, { s, reasons }] = best;
   return { mod, confidence: s >= 8 ? "high" : s >= 4 ? "medium" : "low", reasons };
+}
+
+/** Yarn → Mojang class names that commonly break builds when code is copied between mapping sets. */
+const YARN_TO_MOJ: Record<string, string> = {
+  Identifier: "ResourceLocation", MinecraftClient: "Minecraft", PlayerEntity: "Player", ServerPlayerEntity: "ServerPlayer",
+  ClientPlayerEntity: "LocalPlayer", World: "Level", ServerWorld: "ServerLevel", ClientWorld: "ClientLevel", Text: "Component",
+  MutableText: "MutableComponent", NbtCompound: "CompoundTag", NbtList: "ListTag", Hand: "InteractionHand", ActionResult: "InteractionResult",
+  Box: "AABB", Vec3d: "Vec3", MathHelper: "Mth", Formatting: "ChatFormatting", ItemGroup: "CreativeModeTab", Registries: "BuiltInRegistries",
+  DrawContext: "GuiGraphics", MatrixStack: "PoseStack", StatusEffect: "MobEffect", StatusEffectInstance: "MobEffectInstance",
+  ScreenHandler: "AbstractContainerMenu", PacketByteBuf: "FriendlyByteBuf", TextRenderer: "Font", ItemUsageContext: "UseOnContext",
+};
+const MOJ_TO_YARN = Object.fromEntries(Object.entries(YARN_TO_MOJ).map(([y, m]) => [m, y]));
+const GENERIC = new Set(["World", "Text", "Box", "Hand", "Formatting", "Level", "Component", "Player", "Font", "Minecraft"]);
+const MC_CTX = /net\.minecraft|com\.mojang|net\.fabricmc|net\.minecraftforge|net\.neoforged/;
+const SRG = /^(?:[mfp]_\d+_|C_\d+_|func_\d+_\w+|field_\d+_\w+)$/;
+const INTERMEDIARY = /^(?:method|field|class)_\d+$/;
+
+/** Short next step for a compiler error that involves Minecraft names (mapping mismatch or API change). */
+export function compilerHint(g: CompilerGroup): string | undefined {
+  const n = compilerNames(g);
+  const simple = (x?: string) => x?.split(".").pop();
+  const name = n.name ?? simple(n.imported);
+  const ctx = MC_CTX.test([g.text, g.location, g.source, g.reason, g.symbol?.name, n.pkg].filter(Boolean).join(" "));
+  if (name && SRG.test(name)) return `${name} is an SRG name: translate_mapping name=${name} from=srg shows its Mojang/Yarn name.`;
+  if (name && INTERMEDIARY.test(name)) return `${name} is an Intermediary name: translate_mapping name=${name} from=intermediary.`;
+  const cls = simple(n.imported) ?? name;
+  if (cls && YARN_TO_MOJ[cls] && (ctx || !GENERIC.has(cls))) return `${cls} is a Yarn name; Mojang mappings call it ${YARN_TO_MOJ[cls]}. Check the project's mappings; translate_mapping name=${cls} from=yarn.`;
+  if (cls && MOJ_TO_YARN[cls] && ctx) return `${cls} is a Mojang name; Yarn calls it ${MOJ_TO_YARN[cls]}. Check the project's mappings; translate_mapping name=${cls} from=mojmap.`;
+  if (!ctx) {
+    if (/^(cannot_apply|no_suitable_method|not_abstract|bad_override)$/.test(g.code) && n.owner) return `If ${n.owner} is a Minecraft class, its API changed in this version: get_class className=${n.owner}${name ? ` method=${name}` : ""}.`;
+    return undefined;
+  }
+  switch (g.code) {
+    case "cannot_find_symbol":
+    case "unresolved_reference":
+      if (g.symbol && /^(method|variable|field)$/.test(g.symbol.kind) && n.owner) return `Renamed or removed in this version/mappings? get_class className=${n.owner} memberFilter=${name}; translate_mapping for other mapping names.`;
+      return `Class moved/renamed in this version or mappings? search_mc_source query=${cls ?? name} kind=class; translate_mapping for other mapping names.`;
+    case "package_missing":
+      return `Package moved in this version? search_mc_source query=${simple(n.imported) ?? simple(n.pkg)} kind=class finds the current package.`;
+    case "cannot_apply":
+    case "no_suitable_method":
+    case "not_abstract":
+    case "bad_override":
+    case "incompatible_types":
+      return `Minecraft API changed in this version: get_class${n.owner ? ` className=${n.owner}` : ""}${name ? ` method=${name}` : ""} shows the current signature.`;
+    case "cannot_access":
+      return /wrong version/.test(g.reason ?? "") ? "A dependency targets a newer Java: build with the JDK from get_profile." : "A library class is missing from the compile classpath (dependency not declared or wrong version).";
+    default:
+      return undefined;
+  }
 }

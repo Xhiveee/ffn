@@ -35,7 +35,7 @@ export async function analyzeCrash(_services: Services, a: A) {
   if (!text) return fail("Give log, path or projectDir.");
   const d = diagnose(text);
   const errors = d.findings.filter((f) => f.severity === "error");
-  const head = `${d.source === "crash-report" ? "Crash report" : d.source === "gradle" ? "Gradle output" : d.source === "minecraft-log" ? "Minecraft log" : "Text"} (${origin}): ${d.summary}`;
+  const head = `${d.source === "crash-report" ? "Crash report" : d.source === "gradle" ? "Gradle output" : d.source === "maven" ? "Maven output" : d.source === "minecraft-log" ? "Minecraft log" : "Text"} (${origin}): ${d.summary}`;
   return ok(head, {
     origin,
     source: d.source,
@@ -48,7 +48,6 @@ export async function analyzeCrash(_services: Services, a: A) {
     ...(d.findings.length > (a.offset ?? 0) + (a.limit ?? 20) ? { more: `${d.findings.length - (a.offset ?? 0) - (a.limit ?? 20)} more finding(s): offset=${(a.offset ?? 0) + (a.limit ?? 20)}` } : {}),
     nextSteps: [
       ...(d.findings.some((f) => f.kind === "mixin_error") ? ["Run mixin_validate on the project to locate the bad injection statically."] : []),
-      ...(d.findings.some((f) => f.kind === "compile_error") ? ["Use get_class / search_mc_source to find the current names for this version."] : []),
       ...(d.culprit && d.culprit.confidence !== "high" ? ["The culprit is a heuristic guess; confirm by removing that mod."] : []),
     ],
   });

@@ -3,7 +3,7 @@ import type { Services } from "./services.js";
 import { registerTools } from "./tools/registry.js";
 
 export const SERVER_NAME = "ffn";
-export const SERVER_VERSION = "0.8.0";
+export const SERVER_VERSION = "0.8.1";
 
 const INSTRUCTIONS = `FFN: real Minecraft/loader classes, mappings, docs and build tooling for Forge, Fabric, NeoForge (1.20.1+).
 - Don't guess versions: list_versions, get_profile.
