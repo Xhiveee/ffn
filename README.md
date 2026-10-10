@@ -16,7 +16,7 @@ It is designed so that **new Minecraft versions need no code changes**:
   rules. A version newer than anything verified resolves to the closest lower rules and is flagged
   `UNVERIFIED`. Users can add or override rules in a config directory — no rebuild needed.
 
-> Status: **0.4 (M4: multiloader projects, `check_profiles`)**. Porting tools (`mixin_port`, `port_mod`) were dropped from the plan.
+> Status: **0.4 (M4: multiloader projects, `check_profiles`)**.
 > M3/M4 generated code is verified **by compilation only** (see [M3](#m3-verification-2026-10-10) / [M4 verification](#m4-verification-2026-10-10)); runtime loading is not verified.
 
 ---
@@ -429,7 +429,7 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 - ~~**M3 — content generators & docs:** `generate` (12 kinds, catalog-driven, classpath-verified), `docs_search`,
   `@At` CONSTANT/JUMP/LOAD/STORE/NEW and `@Slice` checks, NEW / `@ModifyConstant` / `@Overwrite` generation.~~ ✅ (compile-verified)
 - ~~**M4 — multiloader & profile check:** `create_project layout: multiloader` (common + per-loader builds),
-  multiloader-aware `generate`, `check_profiles`.~~ ✅ (compile-verified). Porting tools (`mixin_port`, `port_mod`) were dropped from the plan.
+  multiloader-aware `generate`, `check_profiles`.~~ ✅ (compile-verified).
 - **Next (proposal):** runtime verification of generated content, Kotlin DSL build scripts, more content kinds.
 
 ### Known limitations
@@ -507,7 +507,6 @@ Parchment и Gradle-плагинов берутся из официальных 
   - показывает, что устарело или не проверено;
   - предлагает YAML-патчи для пользовательских профилей (сам ничего не применяет);
   - источники описаны в `profiles/checks/upstream.yaml`.
-- Инструменты портирования (`mixin_port`, `port_mod`) исключены из плана по решению пользователя.
 
 **EULA Minecraft:** `run_server` **никогда не принимает EULA сам**. Он требует параметр `acceptEula: true`, а передавать его можно только после того, как **пользователь сам прочитал [EULA](https://aka.ms/MinecraftEULA) и согласился** с ним. Для `run_client` EULA не нужен.
 
