@@ -17,7 +17,7 @@ import { ENDPOINTS } from "../sources/endpoints.js";
 import { Notes } from "../sources/index.js";
 import { downloadFile } from "../util/download.js";
 import { emptySet, MappingTable, parseProguard, parseTinyV2, parseTsrg2, writeTinyV2, type MappingSet } from "./mappings.js";
-import { indexJar, McIndex, vineflowerDecompile, type IndexMeta } from "./store.js";
+import { indexJar, McIndex, vineflowerDecompile, vineflowerDecompileMany, type IndexMeta } from "./store.js";
 import { toolJar, toolJava } from "./tooljars.js";
 
 export const INDEX_NAMESPACES = ["mojmap", "parchment", "yarn", "intermediary", "obf"] as const;
@@ -397,6 +397,13 @@ export class IndexService {
 
   async source(index: McIndex, className: string) {
     return index.source(className, async (outer) => vineflowerDecompile(await toolJava(), await toolJar(this.services, "vineflower"), index, outer));
+  }
+
+  /** Decompile (and cache) several top-level classes in one Vineflower run; returns what was produced. */
+  async decompileMany(index: McIndex, outers: string[]): Promise<Map<string, string>> {
+    const m = await vineflowerDecompileMany(await toolJava(), await toolJar(this.services, "vineflower"), index, outers);
+    for (const [o, t] of m) await index.storeSource(o, t);
+    return m;
   }
 
   /** Joined mapping table for a version: obf ↔ mojmap ↔ intermediary ↔ yarn ↔ srg (whatever exists). */

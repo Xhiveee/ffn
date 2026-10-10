@@ -7,6 +7,7 @@ import { LoaderSchema } from "../profiles/schema.js";
 import type { Services } from "../services.js";
 import { clip, fail, guard, ok, okText, page } from "./result.js";
 import { extractMethods, paramsMatch } from "../index/javasrc.js";
+import { allInterfaces, allSubtypes, directSubtypes, findUsages, overrides, parseTarget, superChain, type Usage, type UsageTarget } from "../index/xref.js";
 
 export const indexSpecShape = {
   mcVersion: z.string().optional().describe("Minecraft version (optional when projectDir is given)."),
@@ -48,8 +49,8 @@ export function classMembers(index: McIndex, name: string, opts: { filter?: stri
 
 export const searchInput = {
   ...indexSpecShape,
-  query: z.string().min(1).describe("Name or fragment (case-insensitive), /regex/, or for kind=text a regex over source lines."),
-  kind: z.enum(["any", "class", "method", "field", "text"]).optional().describe("Default any (names). text greps sources (needs a -sources.jar)."),
+  query: z.string().min(1).describe("Name fragment or /regex/. text: regex over source lines. usages: Class, Class#method[(desc)] or Class#field."),
+  kind: z.enum(["any", "class", "method", "field", "text", "usages"]).optional().describe("any (default): names. text: grep sources (sources jar, else decompiled lazily). usages: callers/readers/users from bytecode."),
   limit: z.number().int().min(1).max(200).optional().describe("Results per page (default 30)."),
   offset: z.number().int().min(0).optional().describe("Skip this many results (paging)."),
 };
@@ -58,7 +59,7 @@ export const getClassInput = {
   ...indexSpecShape,
   className: z.string().describe("Class name: net.minecraft.server.MinecraftServer, internal form, inner classes with . or $, or a simple name."),
   method: z.string().optional().describe('Return only this method\'s source: name ("tick", "<init>" for constructors) or name+descriptor ("hurt(Lnet/minecraft/world/damagesource/DamageSource;F)Z"). All overloads (max 5) without a descriptor.'),
-  detail: z.enum(["outline", "full"]).optional().describe("outline (default): header + field/method signatures, no bodies. full: paged (decompiled) source — use only when the outline + method source are not enough."),
+  detail: z.enum(["outline", "hierarchy", "full"]).optional().describe("outline (default): signatures, no bodies. hierarchy: supertypes, interfaces, subclasses/implementors (+ overrides with method). full: paged source."),
   members: z.array(z.enum(["fields", "methods", "inner"])).optional().describe("Outline sections to include (default all)."),
   memberFilter: z.string().optional().describe("Outline: only members whose name contains this text."),
   inherited: z.boolean().optional().describe("Outline: include members of supertypes found in the index."),
@@ -90,21 +91,80 @@ function indexLine(index: McIndex): string {
   return `Minecraft ${m.mcVersion}, ${m.namespace} names, ${m.kind === "vanilla" ? "vanilla jar" : `${m.loader ?? "project"} jar`}`;
 }
 
+/** Classes decompiled per text-search call when there is no sources jar (one Vineflower run per batch). */
+const DECOMPILE_BUDGET = 40;
+
+async function textSearch(services: Services, index: McIndex, re: RegExp, offset: number, limit: number) {
+  const hits = index.grepSources(re, offset + limit + 1);
+  if (hits) return { hits, origin: "sources jar" };
+  // No sources jar: grep decompiled sources, decompiling only classes whose constant pool can match (cached per class).
+  const cands = index.textCandidates(re);
+  if (!cands) return { hits: [], origin: "no sources jar, and the regex has no literal word (3+ letters) to preselect classes for decompilation — add one, e.g. a method or field name" };
+  const out: { file: string; line: number; text: string }[] = [];
+  let decompiled = 0;
+  let scanned = 0;
+  const grep = (outer: string, text: string) => {
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length && out.length < offset + limit + 1; i++) if (re.test(lines[i]!)) out.push({ file: `${outer}.java`, line: i + 1, text: lines[i]!.trim().slice(0, 240) });
+  };
+  // Grep strictly in candidate order (stable paging); uncached classes are decompiled in look-ahead batches.
+  const fresh = new Map<string, string>();
+  for (let k = 0; k < cands.length && out.length < offset + limit + 1; k++) {
+    const o = cands[k]!;
+    let text = fresh.get(o) ?? (await index.cachedSource(o));
+    if (text === undefined) {
+      if (decompiled >= DECOMPILE_BUDGET) break;
+      const batch: string[] = [];
+      for (let j = k; j < cands.length && batch.length < Math.min(20, DECOMPILE_BUDGET - decompiled); j++) if ((await index.cachedSource(cands[j]!)) === undefined) batch.push(cands[j]!);
+      const m = await services.indexes.decompileMany(index, batch);
+      decompiled += batch.length;
+      for (const [n, t] of m) fresh.set(n, t);
+      text = m.get(o) ?? "";
+    }
+    grep(o, text);
+    scanned = k + 1;
+  }
+  const rest = cands.length - scanned;
+  return {
+    hits: out,
+    origin: `decompiled (Vineflower, cached): ${scanned}/${cands.length} candidate classes scanned${decompiled ? `, ${decompiled} decompiled now` : ""}${rest > 0 && out.length <= offset + limit ? ` — ${rest} not scanned yet: call again to continue` : ""}`,
+  };
+}
+
+function usageLine(u: Usage): string {
+  return `${dotted(u.cls)}${u.method ? `#${u.method}` : ""}  ${u.how}${u.via ? ` via ${dotted(u.via)}` : ""}`;
+}
+
 export async function searchMcSource(services: Services, a: Search) {
   const { index, notes } = await services.indexes.open(toSpec(a));
   const limit = a.limit ?? 30;
   const offset = a.offset ?? 0;
+  if (a.kind === "usages") {
+    const t = parseTarget(a.query);
+    const found = index.resolve(t.cls);
+    if (found.length !== 1) return fail(found.length ? `"${t.cls}" is ambiguous: ${found.slice(0, 8).map(dotted).join(", ")}.` : `Class ${t.cls} not found (${indexLine(index)}).`);
+    const owner = found[0]!;
+    const c = index.get(owner)!;
+    let member: UsageTarget["member"];
+    if (t.member) {
+      const isField = !t.desc?.startsWith("(") && c.f.some(([n]) => n === t.member) && !c.m.some(([n]) => n === t.member);
+      member = { kind: isField ? "field" : "method", name: t.member, desc: t.desc };
+      const known = [owner, ...superChain(index, owner), ...allInterfaces(index, owner)].some((o) => (isField ? index.get(o)?.f : index.get(o)?.m)?.some(([n, d]) => n === t.member && (!t.desc || d === t.desc)));
+      if (!known) return fail(`${dotted(owner)} has no ${isField ? "field" : "method"} ${t.member}${t.desc ?? ""}.`);
+    }
+    const us = await findUsages(index, { owner, member });
+    const pg = page(us, offset, limit);
+    const what = `${dotted(owner)}${member ? `#${member.name}${member.desc ?? ""}` : ""}`;
+    return okText(
+      [`${us.length} usage(s) of ${what} (${indexLine(index)}; bytecode, Minecraft classes only)${pg.more ? ` — ${pg.more}` : ""}.`, ...pg.items.map(usageLine), ...notes.map((n) => `note: ${n}`)].join("\n"),
+    );
+  }
   if (a.kind === "text") {
     const re = new RegExp(a.query.replace(/^\/(.*)\/$/, "$1"), "i");
-    const hits = index.grepSources(re, offset + limit + 1);
-    if (!hits) {
-      return okText(
-        "Full-text search needs Minecraft sources, and none are available for this index: give projectDir after running the loader's source task (Loom genSources / ModDevGradle or ForgeGradle IDE sync), or search names (kind=any) and read one method with get_class method=...",
-      );
-    }
+    const { hits, origin } = await textSearch(services, index, re, offset, limit);
     const pg = page(hits, offset, limit);
     const lines = pg.items.map((h) => `${h.file.replace(/\.java$/, "").replace(/\//g, ".")}:${h.line}  ${clip(h.text, 140)}`);
-    return okText([`${pg.items.length} source line(s) matching ${re} (${indexLine(index)})${hits.length > offset + limit ? ` — more: offset=${offset + limit}` : ""}.`, ...lines, ...notes.map((n) => `note: ${n}`)].join("\n"));
+    return okText([`${pg.items.length} source line(s) matching ${re} (${indexLine(index)}; ${origin})${hits.length > offset + limit ? ` — more: offset=${offset + limit}` : ""}.`, ...lines, ...notes.map((n) => `note: ${n}`)].join("\n"));
   }
   const hits = index.search(a.query, (a.kind as "any" | "class" | "method" | "field") ?? "any", offset + limit + 1);
   const pg = page(hits, offset, limit);
@@ -157,6 +217,35 @@ function outline(index: McIndex, name: string, a: GetClass): { lines: string[]; 
   return { lines: pg.items, total: items.length, shown: pg.items.length, more: pg.more };
 }
 
+function hierarchyView(index: McIndex, name: string, a: GetClass, header: string[]): string[] {
+  const supers = superChain(index, name);
+  const ifaces = allInterfaces(index, name);
+  const direct = directSubtypes(index, name);
+  const all = allSubtypes(index, name);
+  const lines = [header[0]!, `extends: ${supers.length ? supers.map(dotted).join(" → ") : "-"}`, `interfaces (all): ${ifaces.length ? ifaces.map(dotted).join(", ") : "-"}`];
+  if (a.method) {
+    const paren = a.method.indexOf("(");
+    const mname = paren > 0 ? a.method.slice(0, paren) : a.method;
+    const descs = [...new Set([name, ...supers, ...ifaces].flatMap((o) => (index.get(o)?.m ?? []).filter(([n, d]) => n === mname && (paren < 0 || d === a.method!.slice(paren))).map(([, d]) => d)))];
+    if (!descs.length) lines.push(`method ${a.method}: not declared in ${dotted(name)} or its supertypes`);
+    for (const d of descs.slice(0, 5)) {
+      const o = overrides(index, name, mname, d);
+      const pg = page(o.overriddenBy, a.offset ?? 0, a.limit ?? 50);
+      lines.push(`${mname}${d}: overrides ${o.overrides.length ? o.overrides.map(dotted).join(", ") : "-"}; overridden in ${o.overriddenBy.length} subtype(s)${pg.more ? ` (${pg.more})` : ""}`);
+      lines.push(...pg.items.map((s) => `  ${dotted(s)}`));
+    }
+  } else {
+    const pg = page(direct, a.offset ?? 0, a.limit ?? 100);
+    lines.push(`direct subtypes: ${direct.length} (all transitive: ${all.length})${pg.more ? ` — ${pg.more}` : ""}`);
+    lines.push(...pg.items.map((s) => {
+      const k = directSubtypes(index, s).length;
+      return `  ${dotted(s)}${k ? ` (+${k})` : ""}`;
+    }));
+  }
+  lines.push(`(${indexLine(index)}; subtypes are Minecraft/loader classes in the index, not your mod)`);
+  return lines;
+}
+
 export async function getClass(services: Services, a: GetClass) {
   const { index, notes } = await services.indexes.open(toSpec(a));
   const found = index.resolve(a.className);
@@ -174,6 +263,7 @@ export async function getClass(services: Services, a: GetClass) {
     `(${indexLine(index)}; ${c.f.length} fields, ${c.m.length} methods)`,
   ];
 
+  if (a.detail === "hierarchy") return okText(hierarchyView(index, name, a, header).join("\n"));
   if (a.method || a.detail === "full") {
     let src;
     try {

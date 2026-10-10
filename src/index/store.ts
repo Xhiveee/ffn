@@ -207,6 +207,38 @@ export class McIndex {
     return { text, origin: "Vineflower" };
   }
 
+  /** Decompiled source already in the cache (no work). */
+  async cachedSource(outer: string): Promise<string | undefined> {
+    const f = path.join(this.dir, "src", `${outer}.java`);
+    return existsSync(f) ? readFile(f, "utf8") : undefined;
+  }
+
+  async storeSource(outer: string, text: string): Promise<void> {
+    const f = path.join(this.dir, "src", `${outer}.java`);
+    await mkdir(path.dirname(f), { recursive: true });
+    await writeFile(f, text);
+  }
+
+  /**
+   * Top-level classes whose bytecode can contain a match: the regex is tested against the class file's constant pool
+   * text (identifiers, string literals, descriptors are stored as UTF-8). Used to decompile only candidates.
+   */
+  textCandidates(re: RegExp): string[] | undefined {
+    const lit = regexLiterals(re.source);
+    if (!lit) return undefined;
+    this.zip ??= new AdmZip(this.meta.jar);
+    const out = new Set<string>();
+    for (const e of this.zip.getEntries()) {
+      const n = e.entryName;
+      if (!n.endsWith(".class") || n.startsWith("META-INF/")) continue;
+      const cls = n.slice(0, -6);
+      if (!this.classes.has(cls)) continue;
+      const text = e.getData().toString("latin1").toLowerCase();
+      if (lit.mode === "all" ? lit.tokens.every((t) => text.includes(t)) : lit.tokens.some((t) => text.includes(t))) out.add(cls.split("$")[0]!);
+    }
+    return [...out].sort();
+  }
+
   /** Grep the sources jar (only available when one exists). */
   grepSources(re: RegExp, limit: number): { file: string; line: number; text: string }[] | undefined {
     if (!this.hasSourcesJar()) return undefined;
@@ -226,33 +258,66 @@ export class McIndex {
   }
 }
 
+/**
+ * Identifier-like literal words (>= 3 chars) a regex requires, for prefiltering class files:
+ * all of them (no alternation) or any of them (top-level alternation). undefined = no usable literal.
+ */
+export function regexLiterals(src: string): { mode: "all" | "any"; tokens: string[] } | undefined {
+  const cleaned = src
+    .replace(/\\[dDwWsSbBnrtfv]/g, " ")
+    .replace(/\[(?:\\.|[^\]])*\]/g, " ")
+    .replace(/\{\d+(?:,\d*)?\}/g, " ")
+    .replace(/\(\?[:=!<]+/g, " ");
+  const tokenize = (s: string) => (s.replace(/\\(.)/g, " $1 ").match(/[A-Za-z_$][\w$]*/g) ?? []).filter((t) => t.length >= 3).map((t) => t.toLowerCase());
+  if (/(^|[^\\])\|/.test(cleaned)) {
+    const branches = cleaned.split(/(?<!\\)\|/).map(tokenize);
+    if (branches.some((b) => !b.length)) return undefined;
+    return { mode: "any", tokens: [...new Set(branches.map((b) => b.sort((x, y) => y.length - x.length)[0]!))] };
+  }
+  // optional parts (x?, x*, (…)?) must not be required
+  const required = cleaned.replace(/[A-Za-z_$][\w$]*[?*]|\([^()]*\)[?*]/g, " ");
+  const tokens = [...new Set(tokenize(required))];
+  return tokens.length ? { mode: "all", tokens } : undefined;
+}
+
 /** Decompile one top-level class (with its inner classes) using Vineflower. */
 export async function vineflowerDecompile(java: string, vfJar: string, index: McIndex, outer: string): Promise<string | undefined> {
+  return (await vineflowerDecompileMany(java, vfJar, index, [outer])).get(outer);
+}
+
+/** Decompile several top-level classes in one Vineflower run (one JVM start instead of one per class). */
+export async function vineflowerDecompileMany(java: string, vfJar: string, index: McIndex, outers: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!outers.length) return out;
   const tmp = await mkdtemp(path.join(os.tmpdir(), "ffn-vf-"));
   try {
     const inDir = path.join(tmp, "in");
     const outDir = path.join(tmp, "out");
+    const want = new Set(outers);
     let wrote = 0;
     for (const n of index.classes.keys()) {
-      if (n !== outer && !n.startsWith(`${outer}$`)) continue;
+      if (!want.has(n.split("$")[0]!)) continue;
       const b = index.bytes(n);
       if (!b) continue;
       await mkdir(path.dirname(path.join(inDir, n)), { recursive: true });
       await writeFile(path.join(inDir, `${n}.class`), b);
       wrote++;
     }
-    if (!wrote) return undefined;
+    if (!wrote) return out;
     await mkdir(outDir, { recursive: true });
     const r = await runProcess({
       command: java,
       args: ["-Xmx1G", "-jar", vfJar, "-s", `-e=${index.meta.jar}`, inDir, outDir],
       cwd: tmp,
-      timeoutMs: 180_000,
+      timeoutMs: 180_000 + outers.length * 10_000,
       logFile: path.join(tmp, "vf.log"),
     });
-    const f = path.join(outDir, `${outer}.java`);
-    if (!existsSync(f)) throw new Error(`Vineflower produced no output (exit ${r.exitCode}): ${r.tail.slice(-5).join(" | ")}`);
-    return await readFile(f, "utf8");
+    for (const o of outers) {
+      const f = path.join(outDir, `${o}.java`);
+      if (existsSync(f)) out.set(o, await readFile(f, "utf8"));
+    }
+    if (!out.size) throw new Error(`Vineflower produced no output (exit ${r.exitCode}): ${r.tail.slice(-5).join(" | ")}`);
+    return out;
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
