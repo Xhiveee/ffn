@@ -144,10 +144,16 @@ export function render(src: string, data: unknown, ctx: RenderContext): string {
 }
 
 /** Truthiness of a condition expression ("a.b", "!a.b", "a && b", "a || b") against data. */
+/** `a.b`, `!a.b`, `a.b == "lit"`, `a.b != "lit"`, combined with `&&` (binds tighter) and `||`. */
 export function evalCondition(expr: string, data: unknown): boolean {
   return expr.split("||").some((alt) =>
     alt.split("&&").every((term) => {
       const t = term.trim();
+      const cmp = /^([\w.@]+)\s*(==|!=)\s*"([^"]*)"$/.exec(t);
+      if (cmp) {
+        const eq = String(lookup([data], cmp[1]) ?? "") === cmp[3];
+        return cmp[2] === "==" ? eq : !eq;
+      }
       const neg = t.startsWith("!");
       const v = truthy(lookup([data], neg ? t.slice(1).trim() : t));
       return neg ? !v : v;
