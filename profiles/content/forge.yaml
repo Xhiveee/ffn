@@ -103,8 +103,8 @@ tables:
             }
     block_break:
       variants:
-        - requires: ["net.minecraftforge.event.level.BlockEvent$BreakEvent#BUS"]
-          register: "{{@BreakEvent}}.BUS.addListener(false, ModEvents::{{params.handler}});"
+        - requires: ["net.minecraftforge.event.level.BlockEvent$BreakEvent#BUS", "net.minecraftforge.eventbus.api.listener.Priority#NORMAL"]
+          register: "{{@BreakEvent}}.BUS.addListener({{@net.minecraftforge.eventbus.api.listener.Priority}}.NORMAL, ModEvents::{{params.handler}});"
           method: |
             private static void {{params.handler}}({{@BreakEvent}} event) {
                 // React to the block being broken (event.getPos(), event.getState(), event.getPlayer()).
