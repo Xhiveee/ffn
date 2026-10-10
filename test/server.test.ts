@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "../src/server.js";
-import { STUBS } from "../src/tools/stubs.js";
 import { fixtureServices, tmpDir } from "./helpers.js";
 
 let client: Client;
@@ -24,7 +23,7 @@ afterAll(async () => {
 const text = (r: Awaited<ReturnType<Client["callTool"]>>) => (r.content as { type: string; text: string }[])[0]!.text;
 
 describe("MCP server", () => {
-  it("registers implemented tools and all planned stubs", async () => {
+  it("registers all tools", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
@@ -39,13 +38,12 @@ describe("MCP server", () => {
         "mixin_targets",
         "mixin_generate",
         "mixin_validate",
-        "mixin_port",
         "gradle_build",
         "run_client",
         "run_server",
         "analyze_crash",
-        "port_mod",
         "docs_search",
+        "check_profiles",
       ].sort(),
     );
     const cp = tools.find((t) => t.name === "create_project")!;
@@ -105,10 +103,4 @@ describe("MCP server", () => {
     expect(r.isError).toBe(true);
   });
 
-  it("all milestone tools are implemented (no stubs left)", async () => {
-    expect(STUBS).toEqual([]);
-    const r = await client.callTool({ name: "port_mod", arguments: { projectDir: "/nonexistent", targetDir: "/tmp/ffn-x", toMcVersion: "26.3" } });
-    expect(r.isError).toBe(true);
-    expect(text(r)).not.toMatch(/not implemented yet/);
-  });
 });

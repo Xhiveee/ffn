@@ -83,8 +83,8 @@ export function registerGenerateTools(server: McpServer, services: Services): vo
         if (out.blocked.length && !a.force)
           return fail(`Not written: ${out.blocked.length} problem(s) (referenced symbols missing in the target or file conflicts). Fix the catalog/profile or pass force=true.\n\n\`\`\`json\n${JSON.stringify({ ...data, blocked: out.blocked }, null, 2)}\n\`\`\``);
         if (a.dryRun) return ok(`Dry run: ${files.length} file(s) would change.`, data);
-        await writeGenerate(req, out);
-        return ok(`Generated ${plan.kind}${a.name ? ` "${a.name}"` : ""} for ${data.loader} ${plan.mcVersion}: ${files.length} file(s) written (recorded in .ffn/content.json for port_mod). Build with gradle_build to compile-check.`, data);
+        await writeGenerate(out);
+        return ok(`Generated ${plan.kind}${a.name ? ` "${a.name}"` : ""} for ${data.loader} ${plan.mcVersion}: ${files.length} file(s) written. Build with gradle_build to compile-check.`, data);
       }),
   );
 }

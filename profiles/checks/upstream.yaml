@@ -1,0 +1,37 @@
+# Upstream references used by check_profiles. Each file is fetched (cached) and values are extracted with a regex
+# (first capture group). {mc} is replaced with each Minecraft version being checked.
+# Extractable keys: gradle (Gradle wrapper version), plugin (Gradle plugin version), minecraft (MC version the
+# reference targets). A user file with the same path under $FFN_PROFILES_DIR/checks/ replaces this one.
+
+gradleCurrent: https://services.gradle.org/versions/current
+
+references:
+  - loader: fabric
+    title: fabric-example-mod (default branch = newest Minecraft)
+    versions: [latestReference]   # the example mod only tracks the newest version
+    pluginId: [net.fabricmc.fabric-loom, net.fabricmc.fabric-loom-remap, fabric-loom]
+    files:
+      - url: https://raw.githubusercontent.com/FabricMC/fabric-example-mod/HEAD/gradle.properties
+        extract: { minecraft: '^minecraft_version=(\S+)', plugin: '^loom_version=(\S+)' }
+      - url: https://raw.githubusercontent.com/FabricMC/fabric-example-mod/HEAD/gradle/wrapper/gradle-wrapper.properties
+        extract: { gradle: 'gradle-([\d.]+(?:-rc-\d+)?)-(?:bin|all)\.zip' }
+
+  - loader: neoforge
+    title: NeoForge MDK (ModDevGradle) for {mc}
+    versions: ["1.21.1", testedUpTo, latest]   # 1.20.1 NeoForge is a Forge fork without an MDG MDK
+    pluginId: [net.neoforged.moddev]
+    files:
+      - url: https://raw.githubusercontent.com/NeoForgeMDKs/MDK-{mc}-ModDevGradle/HEAD/build.gradle
+        extract: { plugin: "id 'net\\.neoforged\\.moddev' version '([^']+)'" }
+      - url: https://raw.githubusercontent.com/NeoForgeMDKs/MDK-{mc}-ModDevGradle/HEAD/gradle/wrapper/gradle-wrapper.properties
+        extract: { gradle: 'gradle-([\d.]+(?:-rc-\d+)?)-(?:bin|all)\.zip' }
+
+  - loader: forge
+    title: Forge MDK ({mc} branch of MinecraftForge)
+    versions: [minVersion, testedUpTo, latest]
+    pluginId: [net.minecraftforge.gradle]
+    files:
+      - url: https://raw.githubusercontent.com/MinecraftForge/MinecraftForge/{mc}/mdk/build.gradle
+        extract: { plugin: "id 'net\\.minecraftforge\\.gradle' version '([^']+)'" }
+      - url: https://raw.githubusercontent.com/MinecraftForge/MinecraftForge/{mc}/mdk/gradle/wrapper/gradle-wrapper.properties
+        extract: { gradle: 'gradle-([\d.]+(?:-rc-\d+)?)-(?:bin|all)\.zip' }

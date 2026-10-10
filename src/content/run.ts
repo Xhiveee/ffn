@@ -1,7 +1,6 @@
 /**
  * Runs content generation for a project: single-loader projects directly, multiloader projects once per loader
  * subproject, moving every file that all loaders generate identically into the shared common/ tree.
- * Successful requests are recorded in <root>/.ffn/content.json so port_mod can replay them for another version/loader.
  */
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -25,29 +24,6 @@ export async function readMultiloader(dir: string): Promise<MultiloaderInfo | un
   const j = JSON.parse(await readFile(f, "utf8")) as Record<string, unknown>;
   if (j.layout !== "multiloader") return undefined;
   return { root: path.resolve(dir), modId: String(j.modId), package: String(j.package), mcVersion: String(j.mcVersion), loaders: j.loaders as string[], common: String(j.common ?? "common"), subprojects: j.subprojects as Record<string, string> };
-}
-
-export interface RecordedRequest {
-  kind: string;
-  name?: string;
-  displayName?: string;
-  params?: Record<string, unknown>;
-  /** Files this request created (relative to the project root): FFN-owned, replaced when porting. */
-  created: string[];
-  at: string;
-}
-
-export async function readContentLog(root: string): Promise<RecordedRequest[]> {
-  const f = path.join(root, ".ffn", "content.json");
-  if (!existsSync(f)) return [];
-  return ((JSON.parse(await readFile(f, "utf8")) as { requests?: RecordedRequest[] }).requests ?? []);
-}
-
-async function record(root: string, r: RecordedRequest): Promise<void> {
-  const log = await readContentLog(root);
-  log.push(r);
-  await mkdir(path.join(root, ".ffn"), { recursive: true });
-  await writeFile(path.join(root, ".ffn", "content.json"), `${JSON.stringify({ requests: log }, null, 2)}\n`);
 }
 
 export interface OutFile {
@@ -126,20 +102,10 @@ export async function planGenerate(services: Services, req: GenerateRequest): Pr
   return { plans, files, blocked, notes: [`multiloader: ${shared} file(s) identical for ${ml.loaders.join(" + ")} placed in ${ml.common}/; ${files.filter((f) => f.target !== "common").length} loader-specific.`] };
 }
 
-/** Write an outcome and record the request (only for real writes). */
-export async function writeGenerate(req: GenerateRequest, out: GenerateOutcome): Promise<void> {
+/** Write the planned files. */
+export async function writeGenerate(out: GenerateOutcome): Promise<void> {
   for (const f of out.files) {
     await mkdir(path.dirname(f.path), { recursive: true });
     await writeFile(f.path, f.content);
   }
-  const ml = await readMultiloader(req.projectDir);
-  const root = ml?.root ?? path.resolve(req.projectDir);
-  await record(root, {
-    kind: req.kind,
-    ...(req.name ? { name: req.name } : {}),
-    ...(req.displayName ? { displayName: req.displayName } : {}),
-    ...(req.params ? { params: req.params } : {}),
-    created: out.files.filter((f) => f.action === "create").map((f) => path.relative(root, f.path)),
-    at: new Date().toISOString(),
-  });
 }
