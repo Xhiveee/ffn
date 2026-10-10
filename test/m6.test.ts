@@ -193,6 +193,18 @@ describe("docs_search topic / source filters", () => {
     expect(t).toMatch(/Searched: Loader docs \[latest\]; SpongePowered Mixin wiki \[any version\]; MixinExtras wiki \[any version\]\./);
   });
 
+  it("skips results whose page returns 404 and takes the next hit", async () => {
+    const { services, store } = await setup();
+    const first = txt(await docsSearch(services, { query: "@Inject cancellable", topic: "mixin", verifyUrls: false, limit: 1 }, store));
+    const gone = /https:\/\/\S+/.exec(first)![0].replace(/#.*$/, "");
+    store.verifyUrl = async (u: string) => (u === gone ? false : true);
+    const t = txt(await docsSearch(services, { query: "@Inject cancellable", topic: "mixin", limit: 1 }, store));
+    expect(t).not.toContain(gone);
+    expect(t).toMatch(/1 matching page\(s\) skipped: their published URL returns 404/);
+    store.verifyUrl = async () => undefined; // offline: keep, but mark
+    expect(txt(await docsSearch(services, { query: "@Inject cancellable", topic: "mixin", limit: 1 }, store))).toContain("[UNVERIFIED URL]");
+  });
+
   it("snippets drop markdown link targets", () => {
     expect(snippet("See [`INVOKE`](https://x.invalid/a.html) and more", "invoke")).toBe("See `INVOKE` and more");
   });

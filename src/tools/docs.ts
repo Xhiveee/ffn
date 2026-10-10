@@ -67,6 +67,8 @@ export async function docsSearch(services: Services, a: Args, injected?: DocsSto
   const inScope = new Set<DocPage>();
   const topicOk = (p: DocPage) => !topic || p.topics.includes(topic);
   const boostOf = new Map<DocPage, number>();
+  /** Pages from a doc set chosen for another Minecraft version (e.g. Forge's newest docs for an older release). */
+  const fallbackOf = new Map<DocPage, string>();
   const loaders: Loader[] = loader ? [loader] : ["fabric", "forge", "neoforge"];
   const used: string[] = [];
   for (const l of loaders) {
@@ -79,12 +81,15 @@ export async function docsSearch(services: Services, a: Args, injected?: DocsSto
       `${l} docs`,
     );
     if (!choice) continue;
-    if (choice.note) notes.push(choice.note);
+    if (choice.note && !(mc && !choice.exact)) notes.push(choice.note); // fallbacks are labeled in "Searched" and per result
     const chosen = pages.filter((p) => p.version === choice.version);
     if (!chosen.length) continue;
-    for (const p of chosen) inScope.add(p);
+    for (const p of chosen) {
+      inScope.add(p);
+      if (!choice.exact && mc) fallbackOf.set(p, `${choice.version} docs, none for ${mc}`);
+    }
     const titles = [...new Set(chosen.map((p) => p.sourceTitle))];
-    used.push(`${titles.join(" + ")} [${choice.version}]`);
+    used.push(`${titles.join(" + ")} [${choice.version}${!choice.exact && mc ? ` — FALLBACK, no ${l} docs for ${mc}` : ""}]`);
   }
   // version-independent docs (e.g. the Mixin wiki): always in scope, never version-filtered
   for (const s of sources.filter((x) => x.kind === "docs" && !x.versioned)) {
@@ -111,50 +116,48 @@ export async function docsSearch(services: Services, a: Args, injected?: DocsSto
   // topic-only sources (Mixin wikis) stay searchable without a topic, but loader docs win ties
   const topicOnly = new Set(sources.filter((x) => !x.versioned && x.topics.length).map((x) => x.id));
   const hits = rank([...inScope], a.query, (p) => (boostOf.get(p) ?? 1) * (p.kind === "docs" ? 1 : 0.8) * (!topic && topicOnly.has(p.sourceId) ? 0.8 : 1));
+  const verify = a.verifyUrls !== false;
   const seen = new Set<string>();
-  const top = [];
+  const results = [];
+  let gone = 0;
   for (const h of hits) {
+    if (results.length >= limit) break;
     const key = `${h.page.url}#${h.section.anchor}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    top.push(h);
-    if (top.length >= limit) break;
-  }
-
-  const verify = a.verifyUrls !== false;
-  const results = await Promise.all(
-    top.map(async (h) => {
-      let url = h.page.url;
-      let verified: boolean | undefined;
-      if (verify) {
-        verified = await store.verifyUrl(url);
-        if (!verified && h.page.fallbackUrl && (await store.verifyUrl(h.page.fallbackUrl))) {
-          url = h.page.fallbackUrl;
-          verified = true;
-        }
+    let url = h.page.url;
+    let verified: boolean | undefined;
+    if (verify) {
+      verified = await store.verifyUrl(url);
+      if (verified !== true && h.page.fallbackUrl) {
+        const fb = await store.verifyUrl(h.page.fallbackUrl);
+        if (fb) (url = h.page.fallbackUrl), (verified = true);
+        else if (fb === false && verified === undefined) verified = undefined;
       }
-      const code = a.includeCode === false ? undefined : h.section.code[0];
-      return {
-        title: h.page.title,
-        section: h.section.heading || undefined,
-        source: h.page.sourceTitle,
-        kind: h.page.kind,
-        version: h.page.version,
-        url: h.section.anchor ? `${url}#${h.section.anchor}` : url,
-        pageUrl: url,
-        verified,
-        repoPath: h.page.repoPath,
-        score: Math.round(h.score * 100) / 100,
-        snippet: snippet(h.section.text, a.query, 240),
-        code: code ? (code.length > 500 ? `${code.slice(0, 500)}\n…` : code) : undefined,
-      };
-    }),
-  );
-  const unverified = results.filter((r) => verify && !r.verified).length;
+      if (verified === false) {
+        gone++; // the published page no longer exists: skip it, take the next hit
+        continue;
+      }
+    }
+    const code = a.includeCode === false ? undefined : h.section.code[0];
+    results.push({
+      title: h.page.title,
+      section: h.section.heading || undefined,
+      source: h.page.sourceTitle,
+      version: h.page.version,
+      fallback: fallbackOf.get(h.page),
+      url: h.section.anchor ? `${url}#${h.section.anchor}` : url,
+      verified,
+      snippet: snippet(h.section.text, a.query, 240),
+      code: code ? (code.length > 500 ? `${code.slice(0, 500)}\n…` : code) : undefined,
+    });
+  }
+  if (gone) notes.push(`${gone} matching page(s) skipped: their published URL returns 404 (removed upstream).`);
+  const unverified = results.filter((r) => verify && r.verified !== true).length;
   if (unverified) warnings.push(`${unverified} result URL(s) could not be verified (offline, or the page moved): treat them as UNVERIFIED and check the repository path.`);
 
   const lines = results.map((r, i) => {
-    const head = `${i + 1}. ${r.title}${r.section && r.section !== r.title ? ` › ${r.section}` : ""} — ${r.source}${r.version === "any" ? "" : ` (${r.version})`}${verify ? (r.verified ? "" : " [UNVERIFIED URL]") : ""}\n   ${r.url}\n   ${r.snippet}`;
+    const head = `${i + 1}. ${r.title}${r.section && r.section !== r.title ? ` › ${r.section}` : ""} — ${r.source}${r.version === "any" ? "" : r.fallback ? ` (${r.fallback} — FALLBACK)` : ` (${r.version})`}${verify && r.verified !== true ? " [UNVERIFIED URL]" : ""}\n   ${r.url}\n   ${r.snippet}`;
     return r.code ? `${head}\n   \`\`\`\n${r.code.split("\n").map((l) => `   ${l}`).join("\n")}\n   \`\`\`` : head;
   });
   const summary = [

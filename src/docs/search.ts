@@ -400,10 +400,13 @@ export class DocsStore {
     return p;
   }
 
-  private verified = new Map<string, Promise<boolean>>();
-  /** True when the URL answers 2xx (cached per process and on disk for the docs TTL). */
-  async verifyUrl(url: string): Promise<boolean> {
-    if (this.config.offline) return false;
+  private verified = new Map<string, Promise<boolean | undefined>>();
+  /**
+   * true: the URL answers 2xx (cached per process and on disk for the docs TTL); false: the page is gone
+   * (404/410); undefined: could not tell (offline, network error, other status).
+   */
+  async verifyUrl(url: string): Promise<boolean | undefined> {
+    if (this.config.offline) return undefined;
     let v = this.verified.get(url);
     if (!v) {
       v = (async () => {
@@ -418,7 +421,7 @@ export class DocsStore {
         try {
           let res = await this.http(url, { method: "HEAD", headers: this.headers(), redirect: "follow" });
           if (res.status === 405 || res.status === 403) res = await this.http(url, { headers: this.headers(), redirect: "follow" });
-          if (!res.ok) return false;
+          if (!res.ok) return res.status === 404 || res.status === 410 ? false : undefined;
           try {
             db = JSON.parse(await readFile(file, "utf8")) as Record<string, number>;
           } catch {
@@ -429,7 +432,7 @@ export class DocsStore {
           await writeFile(file, JSON.stringify(db));
           return true;
         } catch {
-          return false;
+          return undefined;
         }
       })();
       this.verified.set(url, v);
