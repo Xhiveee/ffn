@@ -1,24 +1,5 @@
 import { describe, expect, it } from "vitest";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { loadConfig } from "../src/config.js";
-import { createServices } from "../src/services.js";
-import { defaultLoaders, loadMultiloaderLayout } from "../src/generator/multiloader.js";
 import { compareDotted, pluginBehind } from "../src/tools/checkProfiles.js";
-
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-describe("multiloader layout profile", () => {
-  it("loads and picks default loaders per version", async () => {
-    const services = createServices({ config: { ...loadConfig(), builtinProfilesDir: path.join(root, "profiles"), userProfilesDir: path.join(root, "nonexistent-user-profiles") } });
-    const { layout } = await loadMultiloaderLayout(services);
-    expect(layout.commonDir).toBe("common");
-    expect(defaultLoaders(layout, "1.20.1")?.loaders).toEqual(["fabric", "forge"]);
-    expect(defaultLoaders(layout, "1.21.1")?.loaders).toEqual(["fabric", "neoforge"]);
-    expect(defaultLoaders(layout, "26.3")?.loaders).toEqual(["fabric", "neoforge"]);
-    expect(layout.buildScriptAppend).toContain("{{common}}/src/main/java");
-  });
-});
 
 describe("check_profiles helpers", () => {
   it("compares dotted versions numerically", () => {

@@ -4,14 +4,11 @@ import { z } from "zod";
 import { planProject, writeProject } from "../generator/index.js";
 import { LoaderSchema, MappingsSchema } from "../profiles/schema.js";
 import type { Services } from "../services.js";
-import { fail, guard, ok } from "./result.js";
-import { planMultiloader } from "../generator/multiloader.js";
+import { guard, ok } from "./result.js";
 
 export const createProjectInput = {
   targetDir: z.string().describe("Directory to create the project in (absolute path recommended). Must be empty unless overwrite=true."),
-  loader: LoaderSchema.optional().describe("forge | fabric | neoforge (required unless layout=multiloader)"),
-  layout: z.enum(["single", "multiloader"]).optional().describe("single (default) or multiloader: common/ + one Gradle build per loader (MultiLoader-Template style, no extra runtime dependency)"),
-  loaders: z.array(LoaderSchema).optional().describe("multiloader: loaders to include (default from profiles/layouts/multiloader.yaml: fabric+forge on 1.20.1, fabric+neoforge on 1.20.2+)"),
+  loader: LoaderSchema.describe("forge | fabric | neoforge"),
   mcVersion: z.string().describe("Minecraft version, e.g. 1.20.1 or the latest release from list_versions."),
   modId: z.string().describe("Mod id: ^[a-z][a-z0-9_]{1,63}$"),
   modName: z.string().min(1).describe("Human-readable mod name."),
@@ -29,8 +26,6 @@ export const createProjectInput = {
 type Args = z.infer<z.ZodObject<typeof createProjectInput>>;
 
 export async function createProject(services: Services, args: Args) {
-  if (args.layout === "multiloader") return createMultiloader(services, args);
-  if (!args.loader) return fail("loader is required (or pass layout=multiloader).");
   const plan = await planProject(services, {
     modId: args.modId,
     modName: args.modName,
@@ -38,7 +33,7 @@ export async function createProject(services: Services, args: Args) {
     author: args.author,
     version: args.version ?? "1.0.0",
     mcVersion: args.mcVersion.trim(),
-    loader: args.loader!,
+    loader: args.loader,
     mappings: args.mappings,
     description: args.description,
     license: args.license,
@@ -70,43 +65,6 @@ export async function createProject(services: Services, args: Args) {
   return ok(
     `${args.dryRun ? "Planned" : "Created"} ${params.loader} ${params.mcVersion} project "${params.modName}" (${files.length} files) in ${target}. ` +
       `Targets Java ${profile.java}; run Gradle with JDK ${Math.max(profile.java, profile.gradle.minJvm ?? 17)}+ (./gradlew build).` +
-      (plan.warnings.length ? `\nWarnings:\n- ${plan.warnings.join("\n- ")}` : ""),
-    data,
-  );
-}
-
-async function createMultiloader(services: Services, args: Args) {
-  if (args.mappings === "yarn") return fail("multiloader projects use Mojang mappings (mojmap or parchment) so common code compiles for every loader.");
-  const plan = await planMultiloader(
-    services,
-    {
-      modId: args.modId, modName: args.modName, package: args.package, author: args.author, version: args.version ?? "1.0.0",
-      mcVersion: args.mcVersion.trim(), mappings: args.mappings, description: args.description, license: args.license, mainClass: args.mainClass,
-    },
-    args.loaders,
-  );
-  const target = path.resolve(args.targetDir);
-  const files = args.dryRun
-    ? [...plan.files.keys()].sort()
-    : await writeProject({ ...plan.plans[plan.loaders[0]!]!, files: plan.files }, target, { overwrite: args.overwrite });
-  const data = {
-    targetDir: target,
-    written: !args.dryRun,
-    layout: "multiloader",
-    loaders: Object.fromEntries(
-      plan.loaders.map((l) => {
-        const { profile, versions } = plan.plans[l]!.context;
-        return [l, { dir: l, versions, java: profile.java, gradle: profile.gradle.version, buildSystem: profile.buildSystem }];
-      }),
-    ),
-    common: "common",
-    files,
-    warnings: plan.warnings,
-    notes: plan.notes,
-    nextSteps: plan.loaders.map((l) => `gradle_build projectDir=${path.join(target, l)}`),
-  };
-  return ok(
-    `${args.dryRun ? "Planned" : "Created"} multiloader project (${plan.loaders.join(" + ")}, Minecraft ${args.mcVersion}) with ${files.length} files in ${target}. Each loader directory is its own Gradle build compiling ../common.` +
       (plan.warnings.length ? `\nWarnings:\n- ${plan.warnings.join("\n- ")}` : ""),
     data,
   );
