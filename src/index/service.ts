@@ -44,6 +44,8 @@ gradle.allprojects { p ->
         def cfg = p.configurations.findByName("compileClasspath")
         def files = cfg == null ? null : p.provider { cfg.files }
         def projectPath = p.path
+        // Build task-produced classpath entries first (e.g. ModDevGradle's patched Minecraft jar).
+        if (cfg != null) dependsOn(cfg)
         doLast {
             if (files != null) files.get().each { println "FFN-CP:" + projectPath + "|" + it.absolutePath }
         }
@@ -268,7 +270,7 @@ export class IndexService {
 
   // ---------------- project / toolchain ----------------
 
-  private async projectClasspath(project: ProjectInfo, onProgress?: (m: string) => void): Promise<string[]> {
+  async projectClasspath(project: ProjectInfo, onProgress?: (m: string) => void): Promise<string[]> {
     const cacheFile = path.join(project.dir, ".ffn", "classpath.json");
     const stamp = ["build.gradle", "build.gradle.kts", "gradle.properties", "settings.gradle", "settings.gradle.kts"]
       .map((f) => path.join(project.dir, f))
