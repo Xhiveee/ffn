@@ -16,9 +16,8 @@ It is designed so that **new Minecraft versions need no code changes**:
   rules. A version newer than anything verified resolves to the closest lower rules and is flagged
   `UNVERIFIED`. Users can add or override rules in a config directory — no rebuild needed.
 
-> Status: **0.3 (M3: content generators, docs search, detailed Mixin checks)**. Still stubs: `mixin_port`,
-> `port_mod` (registered with full input schemas; they answer "not implemented yet").
-> M3 generated content is verified **by compilation only** (see [M3 verification](#m3-verification-2026-10-10)); runtime loading is not verified.
+> Status: **0.4 (M4: multiloader projects, `check_profiles`)**. Porting tools (`mixin_port`, `port_mod`) were dropped from the plan.
+> M3/M4 generated code is verified **by compilation only** (see [M3](#m3-verification-2026-10-10) / [M4 verification](#m4-verification-2026-10-10)); runtime loading is not verified.
 
 ---
 
@@ -28,7 +27,7 @@ It is designed so that **new Minecraft versions need no code changes**:
 |---|---|---|
 | `list_versions` | ✅ | Minecraft releases (optionally snapshots) with loader availability; for one version: Fabric Loader / Fabric API / Yarn, Forge recommended/latest, NeoForge stable/beta, Parchment, Java, recommended Gradle plugin per loader |
 | `get_profile` | ✅ | Resolved profile for `(mcVersion, loader)`: Java, Gradle + plugin, metadata file, mappings, Mixin registration/refmap/MixinExtras/max compatibility level, with extrapolation warnings |
-| `create_project` | ✅ | Ready-to-build project: Gradle wrapper, `build.gradle`, `gradle.properties`, `settings.gradle`, loader metadata, main class, example Mixin + `<modid>.mixins.json` wired correctly for that loader/version, assets/data folders, `.ffn/project.json` |
+| `create_project` | ✅ | Ready-to-build project: Gradle wrapper, `build.gradle`, `gradle.properties`, `settings.gradle`, loader metadata, main class, example Mixin + `<modid>.mixins.json` wired correctly for that loader/version, assets/data folders, `.ffn/project.json`. `layout: "multiloader"` creates `common/` + one build per loader (see [Multiloader projects](#multiloader-projects)) |
 | `gradle_build` | ✅ | Runs Gradle tasks with an automatically chosen JDK, timeout and full log; returns structured findings (javac `file:line` errors, Mixin AP, dependency resolution, JVM/toolchain mismatch…) |
 | `run_client` | ✅ | Starts the game client (headless via Xvfb when there is no display). `mode: "smoke"` waits for "mod loaded + main menu reached" (plus your own `waitFor` regexes), then stops and reports PASS/FAIL |
 | `run_server` | ✅ | Starts the dedicated server. **Requires `acceptEula: true`** (see [EULA](#minecraft-eula)); smoke mode waits for `Done (…)!` |
@@ -41,7 +40,7 @@ It is designed so that **new Minecraft versions need no code changes**:
 | `mixin_validate` | ✅ | Checks mixin configs and classes against the real game classes (see below) |
 | `generate` | ✅ | Content for the project's loader + version: block (block item, blockstate, models, texture, loot, lang), item, block_entity, entity (attributes + renderer), recipe, loot_table, tag, creative_tab, event_handler, networking, config, datagen. Driven by `profiles/content/*.yaml`; every referenced class/method is checked against the project's compile classpath before writing |
 | `docs_search` | ✅ | Searches the official Fabric/Forge/NeoForge docs, the NeoForged version primers and Fabric's per-version announcements for the project's version; cached; returns snippets, code and URLs that were checked to exist |
-| `mixin_port`, `port_mod` | 🚧 | Porting between versions/loaders (M4) |
+| `check_profiles` | ✅ | Compares the profiles with the official Fabric example mod, NeoForge/Forge MDKs, Gradle and plugin metadata, and with Minecraft releases newer than `testedUpTo`; reports outdated/unverified items and suggests user-profile YAML patches (never applied) |
 
 ## Install
 
@@ -194,6 +193,48 @@ versions newer than every numbered set, otherwise the closest set, with a note. 
 version are included, and closer versions rank higher. Every returned page URL is checked with HEAD/GET (cached) and is
 marked `[UNVERIFIED URL]` if the check fails. Set `GITHUB_TOKEN` if the GitHub API rate limit is a problem.
 
+## Multiloader projects
+
+`create_project` with `layout: "multiloader"` (optionally `loaders: [...]`) creates:
+
+```
+<target>/
+  common/src/main/java/<pkg>/<Main>Common.java   loader-independent code (vanilla classes only)
+  common/src/main/resources/                     assets/data shared by all loaders
+  fabric/  neoforge/  forge/                     one complete Gradle build per loader (own wrapper)
+  .ffn/project.json                              layout: multiloader, loaders, subprojects
+```
+
+Every loader build adds `../common/src/main/{java,resources}` as extra source directories, and each loader's
+main class calls `<Main>Common.init()`. Style is MultiLoader-Template (no extra runtime dependency). Architectury is not offered.
+
+FFN deliberately does **not** use one shared Gradle build as MultiLoader-Template does. The loaders' Gradle plugins need
+different Gradle versions (e.g. ModDevGradle-legacy on Gradle 8.x vs Loom on Gradle 9), so independent builds are
+the only layout that works for every loader/version pair. Downsides: `common/` has no build of its own (IDEs see it
+through the loader builds), and you run Gradle per loader directory.
+
+Default loaders and the build-script snippet live in `profiles/layouts/multiloader.yaml`: fabric + forge on 1.20.1, fabric + neoforge on 1.20.2+.
+A user file at `$FFN_PROFILES_DIR/layouts/multiloader.yaml` replaces it.
+Multiloader projects use Mojang mappings (no Yarn).
+
+`generate` on a multiloader root plans the content once per loader. Files that every loader generates identically
+(blockstates, models, textures, loot tables, recipes, tags, lang) go to `common/`, and lang/JSON files are deep-merged.
+Files that differ (registries, main-class hooks, loader events) go to each loader. Symbol checks run per loader against that loader's classpath.
+
+## Profile check (`check_profiles`)
+
+Upstream references are declared in `profiles/checks/upstream.yaml` (URL + regex per value, `{mc}` placeholder):
+fabric-example-mod (`gradle.properties`, wrapper), NeoForge MDKs (`NeoForgeMDKs/MDK-<mc>-ModDevGradle`), Forge
+MDK (`mdk/` of the `<mc>` branch), plus `services.gradle.org` for the current Gradle release. For each loader the tool reports:
+
+- Minecraft releases newer than `testedUpTo` (and whether the loader already has builds);
+- the profile's Gradle pin vs the reference wrapper;
+- the plugin version FFN resolves vs the reference (a `1.18-SNAPSHOT` reference is satisfied by any 1.18.x);
+- intentional plugin deviations (e.g. ModDevGradle-legacy instead of ForgeGradle 6 for Forge 1.20.1);
+- rules without a maintainer build (`verified`).
+
+Suggested patches are user-profile YAML files to drop into `$FFN_PROFILES_DIR`. They are never written automatically.
+
 ## Architecture
 
 ```
@@ -214,6 +255,7 @@ src/
     resolve.ts          rule matching ("since/until/when"), merging, extrapolation warnings
   generator/
     index.ts            planProject() (resolve profile + live versions → file plan), writeProject()
+    multiloader.ts      layout=multiloader planner (common/ + per-loader builds, profiles/layouts/multiloader.yaml)
     templates/          fabric.ts, forgelike.ts (ModDevGradle, MDG-legacy, ForgeGradle 6/7), common.ts
   jdk/                  JDK discovery and selection
   exec/                 process runner (timeouts, process groups), Xvfb/EGL display
@@ -221,7 +263,7 @@ src/
   project/              reads .ffn/project.json or infers loader/version/mappings from Gradle files
   index/                class-file reader, mappings (ProGuard/tiny/tsrg), index store, tool jars, IndexService
   mixin/                Java annotation parser, validator, generator, event hints
-  tools/                one file per tool group (gradle, source, mixin, crash, …), stubs
+  tools/                one file per tool group (gradle, source, mixin, crash, generate, docs, checkProfiles, …)
 profiles/               built-in YAML profiles (fabric/forge/neoforge.yaml) and hints/mixin-hints.yaml
 templates/              Gradle wrapper (jar + scripts) and a placeholder icon
 test/                   vitest; fixtures are real responses captured from the official endpoints
@@ -325,6 +367,19 @@ Fresh projects were created for all 3 loaders on 1.20.1, 1.21.1 and 26.3. Each o
 | `docs_search` live against all sources (NeoForge 26.3, Fabric 1.20.1/26.3, Forge 26.3) | ✅ |
 | Runtime loading of M3 content (`run_client`) | ⚠️ **not verified.** Runtime smoke runs were dropped from M3 verification at the user's request. Three client smoke runs done earlier in development (Fabric 1.20.1, Forge 26.3, NeoForge 26.3) reached the main menu; the Forge 26.3 one found an EventBus 7 bug, which was fixed. That is not systematic coverage. |
 
+### M4 verification (2026-10-10)
+
+Each multiloader project got a block, an item and a shapeless recipe through `generate`. Everything was checked with `gradle_build compileJava`, run separately in each loader directory.
+
+| Check | Result |
+|---|---|
+| Multiloader 1.20.1 (fabric + forge): common class, assets, lang, recipe and loot in `common/`; registries per loader | ✅ both compile |
+| Multiloader 1.21.1 (fabric + neoforge) | ✅ both compile |
+| Multiloader 26.3 (fabric + neoforge) | ✅ both compile |
+| Multiloader 26.3 with all three loaders (fabric + neoforge + forge) | ✅ all compile |
+| `check_profiles` live: no outdated items. Forge 26.3 MDK reference not published; Forge 1.20.1 plugin deviation reported as info | ✅ |
+| Runtime (`run_client` / `run_server`) | ⚠️ not run (compile-only verification at the user's request) |
+
 ## Development
 
 ```sh
@@ -373,13 +428,17 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
   source index + mappings, `mixin_targets` / `mixin_validate` / `mixin_generate`.~~ ✅
 - ~~**M3 — content generators & docs:** `generate` (12 kinds, catalog-driven, classpath-verified), `docs_search`,
   `@At` CONSTANT/JUMP/LOAD/STORE/NEW and `@Slice` checks, NEW / `@ModifyConstant` / `@Overwrite` generation.~~ ✅ (compile-verified)
-- **M4 — porting & multiloader:** `mixin_port` (re-target a mixin to another version or mapping using the index
-  diff), `port_mod`, Architectury / MultiLoader-Template projects, a `sync_profiles` check that diffs profiles against new official MDKs.
+- ~~**M4 — multiloader & profile check:** `create_project layout: multiloader` (common + per-loader builds),
+  multiloader-aware `generate`, `check_profiles`.~~ ✅ (compile-verified). Porting tools (`mixin_port`, `port_mod`) were dropped from the plan.
+- **Next (proposal):** runtime verification of generated content, Kotlin DSL build scripts, more content kinds.
 
 ### Known limitations
 
 - Text search in `search_mc_source` needs a sources jar (project index with sources, e.g. Loom/MDG); decompiled sources are per class.
-- M3 generated content is compile-verified only; runtime loading was not verified systematically.
+- M3 generated content and M4 multiloader projects are compile-verified only; runtime loading was not verified systematically.
+- Multiloader: `common/` has no Gradle build of its own; Kotlin DSL and Yarn are not supported there. Architectury is not offered.
+  `generate` does not see files already in `common/` when it checks for duplicates (lang/JSON is merged; a Java file that conflicts is refused unless `force`).
+- `check_profiles` compares only what the references publish. For example, the Forge 1.20.1 MDK has no Gradle wrapper in `mdk/`, and newer Forge branches may not be found.
 - `generate`: the entity renderer is a `NoopRenderer` placeholder (invisible); textures are 16×16 placeholder PNGs;
   event handlers cover 5 common events; the Forge networking kind registers one direction per message.
   On NeoForge 26.3, `ModConfig.Type` has no COMMON/SERVER; `configType: common` maps to LOCAL and `server` maps to SYNCED.
@@ -416,7 +475,7 @@ Parchment и Gradle-плагинов берутся из официальных 
 с правилом `since: "<версия>"` в папку пользовательских профилей (`~/.config/ffn/profiles`, на Windows
 `%APPDATA%\ffn\profiles`, или путь из `FFN_PROFILES_DIR`) — пересобирать сервер не нужно.
 
-**Сейчас работают (0.3):**
+**Сейчас работают (0.4):**
 
 - `list_versions`, `get_profile`, `create_project`.
 - `gradle_build`, `run_client`, `run_server`: сборка и запуск с автоматическим выбором JDK, таймаутами, логами в `.ffn/logs` и разбором ошибок (файл:строка, Mixin, зависимости, версия Java).
@@ -438,14 +497,28 @@ Parchment и Gradle-плагинов берутся из официальных 
   - найденное кэшируется;
   - результаты содержат фрагменты и код, а каждая ссылка проверена на существование.
 
+- `create_project` с `layout: "multiloader"` создаёт мультилоадер-проект:
+  - `common/` для общего кода и ресурсов, плюс отдельная Gradle-сборка на каждый загрузчик (fabric + forge на 1.20.1, fabric + neoforge на 1.20.2+; набор можно задать через `loaders`);
+  - стиль MultiLoader-Template, без лишних зависимостей в рантайме; Architectury не поддерживается;
+  - сборки раздельные, потому что Gradle-плагины загрузчиков требуют разных версий Gradle;
+  - настройки лежат в `profiles/layouts/multiloader.yaml`.
+- `generate` в мультилоадер-проекте: одинаковые для всех загрузчиков файлы (модели, текстуры, лут, рецепты, теги, перевод) кладутся в `common/`, остальные — в папку каждого загрузчика.
+- `check_profiles` сравнивает профили с официальными fabric-example-mod, NeoForge/Forge MDK, Gradle и метаданными плагинов, а также с новыми релизами Minecraft:
+  - показывает, что устарело или не проверено;
+  - предлагает YAML-патчи для пользовательских профилей (сам ничего не применяет);
+  - источники описаны в `profiles/checks/upstream.yaml`.
+- Инструменты портирования (`mixin_port`, `port_mod`) исключены из плана по решению пользователя.
+
 **EULA Minecraft:** `run_server` **никогда не принимает EULA сам**. Он требует параметр `acceptEula: true`, а передавать его можно только после того, как **пользователь сам прочитал [EULA](https://aka.ms/MinecraftEULA) и согласился** с ним. Для `run_client` EULA не нужен.
 
 **Ограничения:**
 
 - текстовый поиск работает только с sources jar;
 - контент M3 проверен только компиляцией (9 проектов: 3 загрузчика × 1.20.1/1.21.1/26.3); загрузка в игре системно не проверялась;
+- мультилоадер M4 проверен только компиляцией: 1.20.1 (fabric+forge), 1.21.1 и 26.3 (fabric+neoforge), 26.3 со всеми тремя загрузчиками;
+- у `common/` нет своей Gradle-сборки; Kotlin DSL и Yarn в мультилоадере не поддерживаются;
 - рендерер сущности — заглушка `NoopRenderer`, текстуры — заглушки 16×16;
 - ванильный индекс не видит патчей Forge/NeoForge;
 - smoke-тест доказывает загрузку мода и выход в меню, но не применение каждой инъекции (для этого есть `waitFor`).
 
-**Дальше:** M4 — портирование (`mixin_port`, `port_mod`) и мультилоадер (Architectury / MultiLoader-Template).
+**Дальше (предложение):** проверка сгенерированного контента в игре, Kotlin DSL, новые виды контента.
