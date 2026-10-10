@@ -22,9 +22,7 @@ const INSTRUCTIONS = `FFN (ForgeFabricNeoForge) gives you the real Minecraft and
   from get_class / mixin_targets (name(descriptor) is the selector) and check your mixin with mixin_validate.
 - Use translate_mapping instead of guessing names across Mojmap/Yarn/Intermediary/SRG; docs_search for loader docs and version primers.
 - create_project generates a buildable project; build it with gradle_build (FFN picks the JDK and parses errors).
-- run_client mode=smoke proves the mod loads; analyze_crash explains crashes and names the culprit mod.
-- run_server needs acceptEula=true. Only pass it after the user has personally agreed to the Minecraft EULA
-  (https://aka.ms/MinecraftEULA); never accept it on their behalf.
+- analyze_crash explains a crash report or log (from running the game yourself) and names the culprit mod.
 - Warnings marked UNVERIFIED mean the version is newer than FFN's tested profiles: build and verify.`;
 
 /** Build the MCP server with all tools registered. Add new tools here. */

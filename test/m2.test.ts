@@ -11,7 +11,6 @@ import { parseJava } from "../src/mixin/javaparse.js";
 import { MixinValidator, parseSelector, validateProject, type ValidateContext } from "../src/mixin/validate.js";
 import { parseProperties, readProjectInfo } from "../src/project/info.js";
 import { pickJdk, parseJavaMajor } from "../src/jdk/discover.js";
-import { runServer } from "../src/tools/gradle.js";
 import { FIXTURES, fixtureServices, tmpDir } from "./helpers.js";
 
 const CLASSES = path.join(FIXTURES, "classes");
@@ -221,7 +220,7 @@ describe("mixin hints", () => {
   });
 });
 
-describe("projects, JDKs and EULA", () => {
+describe("projects and JDKs", () => {
   it("infers project info without .ffn/project.json", async () => {
     const dir = tmpDir();
     writeFileSync(path.join(dir, "gradle.properties"), "minecraft_version=1.21.1\nneo_version=21.1.1\nmod_id=foo\n");
@@ -237,37 +236,5 @@ describe("projects, JDKs and EULA", () => {
     expect(pickJdk(jdks, 21, "x").jdk!.major).toBe(21);
     expect(pickJdk(jdks, 18, "x").jdk!.major).toBe(21);
     expect(pickJdk(jdks.slice(0, 1), 25, "need 25").missing).toMatch(/No JDK 25\+/);
-  });
-  it("never starts a server without explicit EULA acceptance", async () => {
-    const dir = fakeProject({});
-    const res = await runServer(fixtureServices(), { projectDir: dir });
-    expect(res.isError).toBe(true);
-    expect((res.content[0] as { text: string }).text).toMatch(/EULA/);
-  });
-});
-
-describe("headless display env", () => {
-  it("forces SDL EGL from FFN_EGL_DIR", async () => {
-    const { eglEnv } = await import("../src/exec/display.js");
-    const fs = await import("node:fs");
-    const os = await import("node:os");
-    const p = await import("node:path");
-    const root = fs.mkdtempSync(p.join(os.tmpdir(), "ffn-egl-"));
-    const lib = p.join(root, "usr/lib/x86_64-linux-gnu");
-    fs.mkdirSync(lib, { recursive: true });
-    fs.writeFileSync(p.join(lib, "libEGL.so.1"), "");
-    fs.mkdirSync(p.join(root, "usr/share/glvnd/egl_vendor.d"), { recursive: true });
-    fs.writeFileSync(p.join(root, "usr/share/glvnd/egl_vendor.d/50_mesa.json"), "{}");
-    const prev = process.env.FFN_EGL_DIR;
-    process.env.FFN_EGL_DIR = root;
-    try {
-      const r = eglEnv();
-      expect(r.env.SDL_VIDEO_FORCE_EGL).toBe("1");
-      expect(r.env.LD_LIBRARY_PATH).toContain(lib);
-      expect(r.env.__EGL_VENDOR_LIBRARY_FILENAMES).toContain("50_mesa.json");
-    } finally {
-      if (prev === undefined) delete process.env.FFN_EGL_DIR;
-      else process.env.FFN_EGL_DIR = prev;
-    }
   });
 });

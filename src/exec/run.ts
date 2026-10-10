@@ -16,7 +16,7 @@ export interface RunOptions {
   /** Lines matching any of these are kept (up to maxKept) regardless of the tail window. */
   keepPatterns?: RegExp[];
   maxKept?: number;
-  /** Called for each output line; return "stop" to terminate the process (smoke tests). */
+  /** Called for each output line; return "stop" to terminate the process early. */
   onLine?: (line: string) => "stop" | void;
 }
 
@@ -101,7 +101,7 @@ export async function runProcess(o: RunOptions): Promise<RunResult> {
     child.on("error", reject);
     child.on("close", (code, signal) => resolve({ code, signal }));
   }).finally(() => clearTimeout(timer));
-  // Make sure forked children (game JVM) are gone too.
+  // Make sure forked children are gone too.
   if (stoppedEarly || timedOut) killTree(child.pid, "SIGKILL");
   await new Promise<void>((r) => log.end(r));
   return {

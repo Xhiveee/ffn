@@ -29,8 +29,6 @@ It is designed so that **new Minecraft versions need no code changes**:
 | `get_profile` | ✅ | Resolved profile for `(mcVersion, loader)`: Java, Gradle + plugin, metadata file, mappings, Mixin registration/refmap/MixinExtras/max compatibility level, with extrapolation warnings |
 | `create_project` | ✅ | Ready-to-build project: Gradle wrapper, `build.gradle`, `gradle.properties`, `settings.gradle`, loader metadata, main class, example Mixin + `<modid>.mixins.json` wired correctly for that loader/version, assets/data folders, `.ffn/project.json` |
 | `gradle_build` | ✅ | Runs Gradle tasks with an automatically chosen JDK, timeout and full log; returns structured findings (javac `file:line` errors, Mixin AP, dependency resolution, JVM/toolchain mismatch…) |
-| `run_client` | ✅ | Starts the game client (headless via Xvfb when there is no display). `mode: "smoke"` waits for "mod loaded + main menu reached" (plus your own `waitFor` regexes), then stops and reports PASS/FAIL |
-| `run_server` | ✅ | Starts the dedicated server. **Requires `acceptEula: true`** (see [EULA](#minecraft-eula)); smoke mode waits for `Done (…)!` |
 | `analyze_crash` | ✅ | Crash report / log analysis: root exception, Mixin failures, missing/duplicate mods, class-version problems; scores the most likely culprit mod |
 | `search_mc_source` | ✅ | Class/member search (names, descriptors) and text search in sources of the exact MC version, vanilla or as seen by the project (loader patches included). One line per hit, 30 per page (`offset`/`limit`), snippets clipped |
 | `get_class` | ✅ | **Outline by default**: header (super, interfaces, annotations), fields and method signatures with compact JVM descriptors (= ready Mixin selectors), no bodies; `members`/`memberFilter` filters. `method` returns just that method's source (overloads capped at 5). `detail: "full"` returns source paged by lines (300 by default) with a "more" hint. Source comes from the loader's sources jar or Vineflower |
@@ -82,40 +80,22 @@ Environment variables (all optional):
 | `FFN_OFFLINE` | unset | `1` = never touch the network, serve from cache |
 | `FFN_USER_AGENT` | `FFN-MCP/0.3 …` | Some hosts reject blank/generic agents |
 | `FFN_JDKS` | unset | Extra JDK locations (path-separated) for automatic JDK selection |
-| `FFN_EGL_DIR` | unset | Unpacked Mesa EGL (`usr/lib/<triplet>/libEGL.so.1`) for headless 26.x clients on machines without root (see below) |
 
 You can try it with the MCP Inspector: `npx @modelcontextprotocol/inspector node dist/index.js`.
 
-## Building and running
+## Building
 
-**JDK selection.** `gradle_build`, `run_client` and `run_server` pick the JDK themselves: the required version is
+**JDK selection.** `gradle_build` picks the JDK itself: the required version is
 `max(profile Java, minimum JVM of the Gradle plugin)`, e.g. Java 25 for Fabric Loom 1.18 even on 1.20.1.
 FFN looks in `JAVA_HOME`, `PATH`, `FFN_JDKS`, `~/.gradle/jdks`, `~/jdks`, SDKMAN, `/usr/lib/jvm`, macOS and
 Windows default locations, and passes all found JDKs to Gradle (`org.gradle.java.installations.paths`) so
 toolchains resolve without downloads. Pass `javaHome` to override.
 
-**Logs and errors.** Every run writes `<project>/.ffn/logs/<task>-<time>.log`. The output is parsed into
-findings with `kind`, `severity`, `file`/`line` where known and a suggestion. Run tasks use `--no-daemon`, so
-a timeout or smoke stop kills the whole process tree.
+**Logs and errors.** Every build writes `<project>/.ffn/logs/<task>-<time>.log`. The output is parsed into
+findings with `kind`, `severity`, `file`/`line` where known and a suggestion; a timeout kills the whole process tree.
 
-**Headless client.** With no display on Linux, `run_client` starts a private Xvfb (`display: "xvfb"` forces
-it) with Mesa software OpenGL. Minecraft 26.x opens its window through SDL3, whose GLX path finds no
-matching visual on Xvfb; FFN therefore forces SDL's EGL path when `libEGL.so.1` is available (install
-`libegl1 libegl-mesa0`, or unpack those Debian packages and point `FFN_EGL_DIR` at them). 1.20.x/1.21.x use
-GLFW and work with plain GLX. Missing OpenAL on a headless box is reported as info and is harmless.
-
-**Smoke test.** Markers are only evaluated after Gradle starts the run task: your mod id, your mixin config,
-"main menu reached" (texture atlases created) for the client or `Done (…)!` for the server, plus optional
-`waitFor` regexes (use them for your own mixin's log line: the example mixin targets a server class
-that only loads with a world). Fatal lines (crash report saved, early-display failure) stop the run
-immediately instead of waiting for the timeout.
-
-### Minecraft EULA
-
-`run_server` **never accepts the Minecraft EULA on its own.** It refuses unless `run/eula.txt` already
-contains `eula=true` or the caller passes `acceptEula: true`. An assistant must only pass `acceptEula: true`
-after **the user has read and agreed to the [Minecraft EULA](https://aka.ms/MinecraftEULA)** themselves;
-FFN then writes `eula.txt` with a comment recording that. `run_client` needs no EULA file.
+FFN does not launch Minecraft. Run the game yourself (e.g. `./gradlew runClient`) and pass the crash report
+or log to `analyze_crash`.
 
 ## Source index and mappings
 
@@ -235,7 +215,7 @@ src/
     index.ts            planProject() (resolve profile + live versions → file plan), writeProject()
     templates/          fabric.ts, forgelike.ts (ModDevGradle, MDG-legacy, ForgeGradle 6/7), common.ts
   jdk/                  JDK discovery and selection
-  exec/                 process runner (timeouts, process groups), Xvfb/EGL display
+  exec/                 process runner (timeouts, process groups)
   diagnostics/          log/crash parser → findings + culprit
   project/              reads .ffn/project.json or infers loader/version/mappings from Gradle files
   index/                class-file reader, Java method extractor (javasrc.ts), mappings (ProGuard/tiny/tsrg), index store, tool jars, IndexService
@@ -313,8 +293,6 @@ names where needed, `MixinConfigs` manifest entry, `[[mixins]]` / `fabric.mod.js
 | Deliberately broken mixin (Forge 26.3): wrong method name, `@Shadow` typo, CallbackInfo on a boolean method, INVOKE the target never calls, wrong handler params, missing listed class, `JAVA_25` with Mixin 0.8.7 | ✅ each one reported |
 | Yarn project using a Mojmap name | ✅ reported with the Yarn name |
 | `gradle_build` (JDK auto-pick; broken source → `file:line` compile error) | ✅ |
-| `run_client` smoke (Xvfb): Fabric 1.20.1 & 26.3, Forge 1.20.1 & 26.3, NeoForge 1.20.1, 1.21.1 & 26.3 (26.x via SDL EGL) | ✅ main menu reached, 16–113 s |
-| `run_server` without `acceptEula` | ✅ refused, no `eula.txt` written. The server itself was **not** started (FFN does not accept the EULA for the user) |
 | `analyze_crash` on a real Mixin crash | ✅ culprit `ffnsample`, high confidence |
 | `translate_mapping` `MinecraftServer#loadLevel` (1.20.1) | ✅ obf `n_`, intermediary `method_3735`, yarn `loadWorld`, srg `m_130006_` |
 
@@ -333,7 +311,7 @@ Reproduce with `node scripts/gen-sample.mjs <dir> <loader> <mc>` and `scripts/bu
 |---|---|
 | `check_profiles` live: no outdated items. Forge 26.3 MDK reference not published; Forge 1.20.1 plugin deviation reported as info | ✅ |
 | Regression: single-loader `create_project` on Fabric 26.3 → `gradle_build compileJava` | ✅ compiles |
-| Runtime (`run_client` / `run_server`) | ⚠️ not run (compile-only verification at the user's request) |
+| Runtime | ⚠️ not run (compile-only verification at the user's request) |
 
 ## Development
 
@@ -379,7 +357,7 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 ## Roadmap
 
 - ~~**M1 — foundation:** live versions, profiles, `create_project`.~~ ✅
-- ~~**M2 — build, run, source & Mixin intelligence:** `gradle_build` / `run_client` / `run_server`, `analyze_crash`,
+- ~~**M2 — build, run, source & Mixin intelligence:** `gradle_build`, `analyze_crash`,
   source index + mappings, `mixin_targets` / `mixin_validate`.~~ ✅
 - ~~**M3 — docs & deeper Mixin checks:** `docs_search`, `@At` CONSTANT/JUMP/LOAD/STORE/NEW and `@Slice` checks.~~ ✅
 - ~~**M4 — profile check:** `check_profiles`.~~ ✅
@@ -397,8 +375,7 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 - The Java parser for mixin classes is heuristic: it handles normal mixin code, but not every Java construct.
 - The vanilla index does not contain loader patches. Use the project index for Forge/NeoForge-patched methods.
 - NeoForge 1.20.2–1.21.0: the maximum Mixin compatibility level is not verified (no warning is given).
-- A smoke test proves the mod and its mixin config load and the main menu is reached. It does not prove every injection applied; use `waitFor` for that.
-- `run_server` was only tested up to the EULA gate.
+- FFN no longer launches the game (`run_client` / `run_server` were removed in 0.6.0); runtime behaviour is checked by running the game yourself.
 - `get_class method=…` finds methods in the source with a lightweight brace-matching parser; overloads are matched by simple parameter type names.
 
 ---
@@ -426,8 +403,7 @@ Parchment и Gradle-плагинов берутся из официальных 
 **Сейчас работают (0.5.0):**
 
 - `list_versions`, `get_profile`, `create_project`.
-- `gradle_build`, `run_client`, `run_server`: сборка и запуск с автоматическим выбором JDK, таймаутами, логами в `.ffn/logs` и разбором ошибок (файл:строка, Mixin, зависимости, версия Java).
-- `run_client` умеет работать без монитора (Xvfb). Режим `smoke` проверяет, что мод загрузился и игра дошла до главного меню, после чего останавливает её. Для 26.x на Xvfb нужен Mesa EGL (`libegl1 libegl-mesa0` или `FFN_EGL_DIR`).
+- `gradle_build`: сборка с автоматическим выбором JDK, таймаутом, логом в `.ffn/logs` и кратким разбором ошибок (файл:строка, Mixin, зависимости, версия Java).
 - `analyze_crash`: разбор крэш-репорта или лога с указанием мода-виновника.
 - `search_mc_source`, `get_class`, `translate_mapping`: индекс классов конкретной версии (ванильный или из проекта, с патчами загрузчика), исходники через sources jar или Vineflower, перевод имён Mojmap ↔ Yarn ↔ Intermediary ↔ SRG.
   - `get_class` по умолчанию отдаёт **outline**: заголовок, поля и сигнатуры методов с JVM-дескрипторами (готовые селекторы для Mixin), без тел;
@@ -451,12 +427,11 @@ Parchment и Gradle-плагинов берутся из официальных 
 
 `generate` и `mixin_generate` удалены в 0.5.0: FFN сосредоточен на работе с исходниками и API Minecraft и загрузчиков.
 
-**EULA Minecraft:** `run_server` **никогда не принимает EULA сам**. Он требует параметр `acceptEula: true`, а передавать его можно только после того, как **пользователь сам прочитал [EULA](https://aka.ms/MinecraftEULA) и согласился** с ним. Для `run_client` EULA не нужен.
+**Запуск игры:** FFN больше не запускает Minecraft (`run_client` и `run_server` удалены в 0.6.0). Запускайте игру сами (например, `./gradlew runClient`), а крэш-репорт или лог передайте в `analyze_crash`.
 
 **Ограничения:**
 
 - текстовый поиск работает только с sources jar;
 - ванильный индекс не видит патчей Forge/NeoForge;
-- smoke-тест доказывает загрузку мода и выход в меню, но не применение каждой инъекции (для этого есть `waitFor`).
 
 **Дальше (предложение):** Kotlin DSL, навигация по исходникам (вызовы/использования).

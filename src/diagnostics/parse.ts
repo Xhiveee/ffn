@@ -302,7 +302,7 @@ export function diagnose(text: string): Diagnosis {
       continue;
     }
     if (/You need to agree to the EULA in order to run the server/.test(line)) {
-      push(findings, { kind: "eula", severity: "error", message: "The Minecraft EULA has not been accepted.", evidence: line.trim(), suggestion: "The user must read https://aka.ms/MinecraftEULA and agree; then call run_server with acceptEula=true." });
+      push(findings, { kind: "eula", severity: "error", message: "The Minecraft EULA has not been accepted.", evidence: line.trim(), suggestion: "The user must read https://aka.ms/MinecraftEULA and agree; only then set eula=true in eula.txt (never on their behalf)." });
     }
   }
 

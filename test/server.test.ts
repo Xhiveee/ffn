@@ -42,8 +42,6 @@ describe("MCP server", () => {
         "mixin_targets",
         "mixin_validate",
         "gradle_build",
-        "run_client",
-        "run_server",
         "analyze_crash",
         "docs_search",
         "check_profiles",
@@ -99,11 +97,6 @@ describe("MCP server", () => {
     });
     expect(r.isError).toBe(true);
     expect(text(r)).toMatch(/Invalid modId/);
-  });
-
-  it("run_server refuses without acceptEula (EULA is never auto-accepted)", async () => {
-    const r = await client.callTool({ name: "run_server", arguments: { projectDir: "/nonexistent-ffn-project" } });
-    expect(r.isError).toBe(true);
   });
 
 });
