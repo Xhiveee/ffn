@@ -1,0 +1,126 @@
+# FFN version profile: MinecraftForge
+#
+# Forge versions are read live from maven.minecraftforge.net (maven-metadata.xml,
+# entries look like "<mc>-<forge>") and promotions_slim.json (recommended/latest).
+loader: forge
+minVersion: "1.20.1"
+testedUpTo: "26.3"
+rules:
+  # Base rule. Later rules override what changed, so 1.20.1-specific values below are
+  # replaced from 1.20.2 on (buildSystem, plugin, mixin wiring, ...).
+  - since: "1.20.1"
+    description: Forge 1.20.1 via ModDevGradle legacyforge (first-class Mixin/refmap support, Parchment)
+    verified: ["1.20.1"]
+    set:
+      java: auto
+      gradle: { version: "8.14.5" }
+      buildSystem: moddevgradle-legacy
+      plugin:
+        id: net.neoforged.moddev.legacyforge
+        version: latest
+        metadataUrl: https://maven.neoforged.net/releases/net/neoforged/moddev/legacyforge/net.neoforged.moddev.legacyforge.gradle.plugin/maven-metadata.xml
+      loaderArtifact: net.minecraftforge:forge
+      metadata:
+        file: META-INF/mods.toml
+        format: mods.toml
+        loaderVersion: forge-major
+        loaderModId: forge
+        dependencyStyle: mandatory
+      mappings:
+        default: mojmap
+        supported: [mojmap, parchment]
+      mixin:
+        registration: manifest
+        devRunArg: false
+        refmap: true
+        annotationProcessor: org.spongepowered:mixin:0.8.5:processor
+        compatibilityLevel: JAVA_17
+        mixinExtras:
+          bundled: false
+          note: Not bundled. Add io.github.llamalad7:mixinextras-forge via jarJar and call MixinExtrasBootstrap.init().
+      packMeta: { kind: pack_format, format: 15 }
+      sampleMixin:
+        mojmap:
+          targetClass: net.minecraft.server.MinecraftServer
+          method: loadLevel
+          comment: Injected at the start of MinecraftServer.loadLevel()V
+        parchment:
+          targetClass: net.minecraft.server.MinecraftServer
+          method: loadLevel
+          comment: Injected at the start of MinecraftServer.loadLevel()V
+      references:
+        - https://github.com/NeoForgeMDKs/MDK-Forge-1.20.1-ModDevGradle
+        - https://github.com/neoforged/ModDevGradle/blob/main/LEGACY.md
+        - https://files.minecraftforge.net/
+      notes:
+        - Uses ModDevGradle's legacyforge plugin (maintained by NeoForged) instead of ForgeGradle 6 because it wires the Mixin refmap with one block; the official Forge MDK (ForgeGradle 6) works too.
+
+  - since: "1.20.2"
+    description: ForgeGradle 6 (official Forge MDK), Mojang mappings only
+    set:
+      gradle: { version: "8.12.1" }
+      buildSystem: forgegradle6
+      plugin:
+        id: net.minecraftforge.gradle
+        version: latest
+        versionPrefix: "6.0."
+        metadataUrl: https://maven.minecraftforge.net/net/minecraftforge/gradle/ForgeGradle/maven-metadata.xml
+      mappings:
+        default: mojmap
+        supported: [mojmap]
+      mixin:
+        registration: manifest
+        devRunArg: true
+        refmap: true # SRG at runtime until 1.20.6
+        annotationProcessor: org.spongepowered:mixin:0.8.5:processor
+        mixinGradle: { id: org.spongepowered.mixin, version: "0.7.+" }
+      packMeta: { kind: pack_format, format: 18 }
+      references:
+        - https://maven.minecraftforge.net/net/minecraftforge/forge/ (forge-<mc>-<ver>-mdk.zip)
+      notes: []
+
+  # Resource-pack formats below are the published values for each release; Forge only logs
+  # a warning on mismatch, so an extrapolated value is harmless for a new version.
+  - { since: "1.20.3", set: { packMeta: { format: 22 } } }
+  - { since: "1.20.5", set: { packMeta: { format: 32 } } }
+  - { since: "1.21", set: { packMeta: { format: 34 } } }
+  - { since: "1.21.2", set: { packMeta: { format: 42 } } }
+  - { since: "1.21.4", set: { packMeta: { format: 46 } } }
+  - { since: "1.21.5", set: { packMeta: { format: 55 } } }
+  - { since: "1.21.6", set: { packMeta: { format: 63 } } }
+  - { since: "1.21.7", set: { packMeta: { format: 64 } } }
+  - { since: "1.21.9", set: { packMeta: { kind: min_max, format: 69 } } }
+
+  - since: "1.20.6"
+    description: Forge runs on Mojang names from 1.20.6 — no refmap needed
+    set:
+      mixin:
+        refmap: false
+        mixinGradle: null
+        annotationProcessor: null
+        compatibilityLevel: JAVA_21
+
+  - since: "1.21.11"
+    description: ForgeGradle 7 (official MDK for 1.21.11+); Forge ships MixinExtras
+    set:
+      gradle: { version: "9.7.1" }
+      buildSystem: forgegradle7
+      plugin:
+        id: net.minecraftforge.gradle
+        version: latest
+        versionPrefix: "7."
+        metadataUrl: https://plugins.gradle.org/m2/net/minecraftforge/gradle/net.minecraftforge.gradle.gradle.plugin/maven-metadata.xml
+      mixin:
+        # Forge bundles org.spongepowered:mixin 0.8.7, which knows compatibility levels only up to JAVA_21.
+        compatibilityLevel: JAVA_21
+        mixinExtras:
+          bundled: true
+          note: Forge 1.21.11+ ships mixinextras-forge (seen in the installer's library list).
+      packMeta: { kind: min_max, format: 94 }
+      references:
+        - https://github.com/MinecraftForge/MDKExamples/tree/main/mixins-only/fg7
+
+  - since: "26.3"
+    verified: ["26.3"]
+    set:
+      packMeta: { kind: min_max, format: 121 }

@@ -1,0 +1,68 @@
+# FFN version profile: Fabric
+#
+# Rules apply in order; every rule whose range/conditions match is merged on top of the
+# previous ones ("from X and up"). Facts such as the Java version and whether Minecraft is
+# obfuscated are read live from Mojang metadata, so most new versions need no new rule.
+# Loader / Fabric API / Yarn / Loom versions are always fetched live, never written here.
+loader: fabric
+minVersion: "1.20.1"
+testedUpTo: "26.3"
+rules:
+  - since: "1.20.1"
+    description: Fabric Loom + Fabric Loader, Mojang mappings by default (matches the official example mod)
+    verified: ["1.20.1"]
+    set:
+      java: auto
+      gradle: { version: "9.7.1" }
+      buildSystem: fabric-loom
+      plugin:
+        id: net.fabricmc.fabric-loom-remap
+        version: latest
+        metadataUrl: https://maven.fabricmc.net/net/fabricmc/fabric-loom/maven-metadata.xml
+      loaderArtifact: net.fabricmc:fabric-loader
+      metadata:
+        file: fabric.mod.json
+        format: fabric.mod.json
+      mappings:
+        default: mojmap
+        supported: [mojmap, parchment, yarn]
+      mixin:
+        registration: fabric.mod.json
+        devRunArg: false
+        refmap: true # generated automatically by Loom
+        compatibilityLevel: auto
+        mixinExtras:
+          bundled: true
+          note: Fabric Loader >= 0.15 ships MixinExtras; no extra dependency needed.
+      packMeta: { kind: none }
+      sampleMixin:
+        mojmap:
+          targetClass: net.minecraft.server.MinecraftServer
+          method: loadLevel
+          comment: Injected at the start of MinecraftServer.loadLevel()V
+        parchment:
+          targetClass: net.minecraft.server.MinecraftServer
+          method: loadLevel
+          comment: Injected at the start of MinecraftServer.loadLevel()V
+        yarn:
+          targetClass: net.minecraft.server.MinecraftServer
+          method: loadWorld
+          comment: Injected at the start of MinecraftServer.loadWorld()V (Yarn name)
+      references:
+        - https://github.com/FabricMC/fabric-example-mod
+        - https://fabricmc.net/develop/
+        - https://docs.fabricmc.net/
+      notes:
+        - Fabric API is resolved live from maven.fabricmc.net for the exact Minecraft version.
+
+  - when: { obfuscated: false }
+    description: Unobfuscated Minecraft (26.1+) — no remapping, no Yarn/Parchment, plain implementation deps
+    verified: ["26.3"]
+    set:
+      plugin: { id: net.fabricmc.fabric-loom }
+      mappings:
+        default: mojmap
+        supported: [mojmap]
+      mixin: { refmap: false }
+      addNotes:
+        - Minecraft ships with official names; Loom does not remap (plugin id net.fabricmc.fabric-loom).
