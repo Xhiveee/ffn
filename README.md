@@ -16,7 +16,7 @@ It is designed so that **new Minecraft versions need no code changes**:
   rules. A version newer than anything verified resolves to the closest lower rules and is flagged
   `UNVERIFIED`. Users can add or override rules in a config directory — no rebuild needed.
 
-> Status: **0.7.0 (works on your own projects, e.g. official MDKs; `create_project` removed)**.
+> Status: **0.8.0 (code navigation, loader-patched sources without a project, multi-project builds, real Java parser for mixins, cross-platform)**.
 > FFN focuses on giving an AI agent accurate Minecraft/loader sources and APIs with small, paged outputs (see [Token economy](#token-economy)).
 
 ---
@@ -29,12 +29,12 @@ It is designed so that **new Minecraft versions need no code changes**:
 | `get_profile` | ✅ | Resolved profile for `(mcVersion, loader)`: Java, Gradle + plugin, metadata file, mappings, Mixin registration/refmap/MixinExtras/max compatibility level, with extrapolation warnings |
 | `gradle_build` | ✅ | Runs Gradle tasks with an automatically chosen JDK, timeout and full log; returns structured findings (javac `file:line` errors, Mixin AP, dependency resolution, JVM/toolchain mismatch…) |
 | `analyze_crash` | ✅ | Crash report / log analysis: root exception, Mixin failures, missing/duplicate mods, class-version problems; scores the most likely culprit mod |
-| `search_mc_source` | ✅ | Class/member search (names, descriptors) and text search in sources of the exact MC version, vanilla or as seen by the project (loader patches included). One line per hit, 30 per page (`offset`/`limit`), snippets clipped |
-| `get_class` | ✅ | **Outline by default**: header (super, interfaces, annotations), fields and method signatures with compact JVM descriptors (= ready Mixin selectors), no bodies; `members`/`memberFilter` filters. `method` returns just that method's source (overloads capped at 5). `detail: "full"` returns source paged by lines (300 by default) with a "more" hint. Source comes from the loader's sources jar or Vineflower |
+| `search_mc_source` | ✅ | Class/member search (names, descriptors), **usages** (`kind: "usages"`: who calls a method / reads a field / references a class, from bytecode) and text search in sources of the exact MC version: vanilla, as seen by the project, or Forge/NeoForge-patched without a project (`source: "loader"`). Text search works without a sources jar (classes are decompiled lazily, in batches). One line per hit, 30 per page (`offset`/`limit`), snippets clipped |
+| `get_class` | ✅ | **Outline by default**: header (super, interfaces, annotations), fields and method signatures with compact JVM descriptors (= ready Mixin selectors), no bodies; `members`/`memberFilter` filters. `method` returns just that method's source (overloads capped at 5). `detail: "hierarchy"` returns super chain, all interfaces and subtypes; with `method`, where it is overridden. `detail: "full"` returns source paged by lines (300 by default) with a "more" hint. Source comes from the loader's sources jar or Vineflower |
 | `translate_mapping` | ✅ | Class/method/field names across Mojmap ↔ Yarn ↔ Intermediary ↔ SRG ↔ obfuscated (identity on unobfuscated 26.x+) |
 | `mixin_targets` | ✅ | **Loader event hints first**, then the class's method selectors (paged). With `methodFilter` (≤3 matches) or `injectionPoints: true`: concise injection points from bytecode (`HEAD \| RETURN ×n \| TAIL`, INVOKE/FIELD/NEW/CONSTANT targets deduped, `maxPoints` per kind, lambdas) |
-| `mixin_validate` | ✅ | Checks mixin configs and classes against the real game classes (see below) |
-| `docs_search` | ✅ | Searches the official Fabric/Forge/NeoForge docs, the NeoForged version primers, Fabric's per-version announcements and **Mixin docs** (SpongePowered Mixin wiki, MixinExtras wiki, Fabric mixin docs/wiki pages; `topic: "mixin"` searches only those). Version-aware for loader docs; cached; returns short snippets, code and URLs that were checked to exist |
+| `mixin_validate` | ✅ | Checks mixin configs and classes against the real game classes (see below); every subproject of a multi-project build |
+| `docs_search` | ✅ | Searches the official Fabric/Forge/NeoForge docs, the NeoForged version primers, Fabric's per-version announcements and **Mixin docs** (SpongePowered Mixin wiki, MixinExtras wiki, Fabric mixin docs/wiki pages; `topic: "mixin"` searches only those). Version-aware for loader docs; cached; returns short snippets, code and URLs that were checked to exist (pages whose URL returns 404 are skipped; results from a nearest-version fallback, e.g. Forge on 26.x, are labelled `FALLBACK`) |
 | `check_profiles` | ✅ | Compares the profiles with the official Fabric example mod, NeoForge/Forge MDKs, Gradle and plugin metadata, and with Minecraft releases newer than `testedUpTo`; reports outdated/unverified items and suggests user-profile YAML patches (never applied) |
 
 ## Install
@@ -102,13 +102,23 @@ placeholders such as `${project.minecraft_version}` or `@MC_VERSION@` are never 
 the error says exactly which keys FFN looks for. A `.ffn/project.json` from older FFN versions is still honoured.
 FFN writes only caches into the project (`.ffn/classpath.json`, `.ffn/logs/`).
 
+**Multi-project builds** (MultiLoader-Template, Architectury): pass the root or any subproject. FFN reads
+`settings.gradle(.kts)` `include(...)`, detects each subproject's loader (`common` = platform-neutral), runs Gradle from
+the root with the subproject's task path (`:neoforge:compileJava`), resolves the classpath per subproject and validates
+the mixin configs of every subproject. A common module's config counts as registered when the loader subprojects
+register it; `${mod_id}` placeholders in registrations are resolved. For source tools pass `loader` to pick the
+subproject whose classpath is used.
+
 ## Building
 
 **JDK selection.** `gradle_build` picks the JDK itself: the required version is
 `max(profile Java, minimum JVM of the Gradle plugin)`, e.g. Java 25 for Fabric Loom 1.18 even on 1.20.1.
-FFN looks in `JAVA_HOME`, `PATH`, `FFN_JDKS`, `~/.gradle/jdks`, `~/jdks`, SDKMAN, `/usr/lib/jvm`, macOS and
-Windows default locations, and passes all found JDKs to Gradle (`org.gradle.java.installations.paths`) so
-toolchains resolve without downloads. Pass `javaHome` to override.
+The Gradle wrapper caps it: a JDK newer than the wrapper's Gradle can run on is never picked (MultiLoader 1.21.1 with
+Gradle 8.10 builds on JDK 21, not 25). FFN looks in `JAVA_HOME`, `PATH`, `FFN_JDKS`, `~/.gradle/jdks`, `~/jdks`, SDKMAN,
+asdf, `/usr/lib/jvm`; on macOS `/Library/Java/JavaVirtualMachines`, Homebrew and `java_home -V`; on Windows
+`Program Files` vendor folders (Adoptium, Zulu, Microsoft, BellSoft, Amazon…) and the registry (`reg query`). All found
+JDKs are passed to Gradle (`org.gradle.java.installations.paths`) so toolchains resolve without downloads. Pass
+`javaHome` to override. On Windows `gradlew.bat` is run through `cmd.exe` with correct quoting.
 
 **Logs and errors.** Every build writes `<project>/.ffn/logs/<task>-<time>.log`. The output is parsed into
 findings with `kind`, `severity`, `file`/`line` where known and a suggestion; a timeout kills the whole process tree.
@@ -124,10 +134,15 @@ or log to `analyze_crash`.
 |---|---|---|
 | `project` (default when `projectDir` is given) | The game jar on the project's compile classpath, exactly as the loader sees it (Forge/NeoForge patches, project mappings), plus its `-sources.jar` if present | FFN asks Gradle once (`ffnPrintClasspath`), caches the classpath in `.ffn/classpath.json` until build files change |
 | `vanilla` | Mojang's client jar + the server jar from the bundler, merged; remapped with tiny-remapper to `mojmap`, `yarn` or `intermediary`; 26.x+ is used as is (unobfuscated) | No project, or `source: "vanilla"` |
+| `loader` | The Forge/NeoForge-patched jar, without a project of yours: FFN unpacks the official MDK (Forge Maven `forge-<mc>-<v>-mdk.zip`, NeoForge `NeoForgeMDKs/MDK-<mc>-ModDevGradle`, else `-NeoGradle`) into `<cache>/loader-ws/` and indexes its classpath | `source: "loader"` + `loader`; first run 1–2.5 min (Gradle setup), then ≈ 1 s |
 
 The index lives in `~/.cache/ffn/index/<mc>/<namespace>/` (`project/<hash>/` for projects). Building the
-1.20.1 Mojmap index takes about 5 s. Classes without a sources jar are decompiled one at a time with
-Vineflower (about 1.5 s, then cached). Text search needs real sources (a sources jar), not decompiled code.
+1.20.1 Mojmap index takes about 5 s. Classes without a sources jar are decompiled with Vineflower (about 1.5 s, then
+cached). **Text search without a sources jar** prefilters classes by the literal words of the pattern in their constant
+pools, then decompiles up to 40 candidates per call in batches (≈ 3 s for 20 classes, ≈ 1 s cached); results come in a
+stable order and the answer says how to continue. **Navigation:** a constant-pool reference table (`refs.json`, built
+once per index in ≈ 4 s) answers usages (`LivingEntity#hurt` → 66 call sites with their opcode, including calls via a
+subclass), and `get_class detail=hierarchy` gives supertypes, subtypes and overrides.
 Mappings: Mojang ProGuard files, Fabric Intermediary and Yarn (tiny v2) and MCPConfig (tsrg2), joined on obfuscated names.
 SRG names are offered only where they are real (`m_N_` up to 1.20.x Forge).
 
@@ -140,7 +155,11 @@ SRG names are offered only where they are real (`m_N_` up to 1.20.x Forge).
 - listed classes exist and unlisted `@Mixin` classes; targets exist; client-only targets in `"mixins"`;
 - method selectors (overloads, inherited members, "did you mean", the other mapping's name), `@At` HEAD/RETURN/TAIL/INVOKE/FIELD/NEW against the bytecode (including calls that actually sit in a lambda);
 - handler signatures for `@Inject` (CallbackInfo vs CallbackInfoReturnable, argument lists, static), `@Redirect`, `@ModifyArg`, `@ModifyVariable`, `@ModifyReturnValue`, `@ModifyExpressionValue`, `@WrapOperation`, `@WrapWithCondition`, `@WrapMethod`;
-- `@Accessor` / `@Invoker` / `@Shadow` / `@Overwrite`, MixinExtras availability, and mixin methods that accidentally collide with a target method (a runtime "@Overwrite is required" crash).
+- `@Accessor` / `@Invoker` / `@Shadow` / `@Overwrite`, MixinExtras availability, and mixin methods that accidentally collide with a target method (a runtime "@Overwrite is required" crash);
+- `@ModifyVariable(name=…)` and MixinExtras `@Local` (`ordinal`, `index`, `name`, type) against the target's local variable table when the jar has one (Mojang jars do not: then an info note, not an error).
+
+Mixin classes are parsed with a real Java parser (`java-parser`, loaded on first use); annotation values are
+constant-folded (`"a" + CONST`). On a syntax error FFN falls back to a tolerant parser and says so.
 
 **Event hints.** `mixin_targets` first lists loader events/APIs that cover common needs (server tick, player
 join, block break, damage, item tooltips, HUD rendering…) with the Fabric/Forge/NeoForge names. They live in
@@ -179,6 +198,10 @@ Approximate tokens (characters / 4), measured with `scripts/measure-tokens.mjs` 
 | `list_versions` | 2,044 | 282 |
 | `get_profile` | 1,126 | 243 |
 | `docs_search` | 9,008 | 1,257 |
+
+Tool definitions and startup (`scripts/measure-startup.mjs`, median of 7 runs; 0.7.0 → 0.8.0, same 11 tools with more features):
+`tools/list` 4,303 → 3,149 tokens, server instructions 392 → 206 tokens, start-up to first `tools/list` 339 → 246 ms,
+RSS 92 → 76 MB. Tool modules and their dependencies (index, Java parser, Vineflower glue, docs) load on first call.
 
 ## Docs search (`docs_search`)
 
@@ -289,7 +312,7 @@ These facts drive the JDK choice of `gradle_build`, the checks of `mixin_validat
 | Forge | 1.20.2 – 1.21.10 | ForgeGradle 6 | `META-INF/mods.toml` | manifest + `-mixin.config` dev arg (+ MixinGradle refmap ≤ 1.20.4) |
 | Forge | 1.21.11+ | ForgeGradle 7 | `META-INF/mods.toml` | manifest + `--mixin.config` dev arg |
 | NeoForge | 1.20.1 | ModDevGradle *legacyforge* (`net.neoforged:forge`) | `META-INF/mods.toml` | manifest + refmap |
-| NeoForge | 1.20.2 – 1.20.4 | ModDevGradle | `META-INF/mods.toml` | `[[mixins]]` |
+| NeoForge | 1.20.2 – 1.20.4 | ModDevGradle (official 1.20.2 MDK: NeoGradle 7) | `META-INF/mods.toml` | `[[mixins]]` |
 | NeoForge | 1.20.5+ | ModDevGradle | `META-INF/neoforge.mods.toml` | `[[mixins]]` |
 
 ### M2 verification (2026-10-10)
@@ -326,6 +349,17 @@ These facts drive the JDK choice of `gradle_build`, the checks of `mixin_validat
 | Same 11: `gradle_build compileJava` + `mixin_validate` (project index) | ✅ all compile, all mixins valid |
 | Official MDKs: Fabric example mod (26.3, split client source set), NeoForge `MDK-1.21.1-ModDevGradle` (Parchment), `MDK-1.21.1-NeoGradle`, `MDK-Forge-1.20.1-ModDevGradle`, Forge MDK zips 1.20.1 / 1.20.4 / 1.21.1 | ✅ detected correctly (7/7) |
 | Official MDKs `gradle_build compileJava` + `mixin_validate`: Fabric example mod, NeoForge 1.21.1 MDG, Forge 1.21.1, Forge 1.20.1 MDG | ✅ (the Fabric example mod's client mixin targeting `net.minecraft.client.Minecraft` first failed — client classes are in Loom's separate `clientOnly` jar; fixed by indexing both) |
+
+### 0.8 verification (2026-10-10, compile only)
+
+| Check | Result |
+|---|---|
+| `gradle_build compileJava` + `mixin_validate` on official MDKs: Fabric example mod, NeoForge 1.20.2 (NeoGradle) and 1.20.4 (MDG) with an added `@Mixin(MinecraftServer)`, Forge 1.20.1 / 1.20.4 / 1.21.1, NeoForge 1.21.1 MDG + NeoGradle, Forge 1.20.1 MDG | ✅ all compile, all valid |
+| MultiLoader-Template 1.21.1 (common + fabric + neoforge + forge) | ✅ "4 mixin(s) checked in 4 subprojects", built with JDK 21 (wrapper cap) |
+| NeoForge 1.20.2–1.20.4 profiles: universal jars carry Mojang names (no refmap); bundled Mixin 0.8.5 on 20.2 (max `JAVA_18`), sponge-mixin 0.13+ from 20.4 (`JAVA_22`); MixinExtras bundled since 20.2.84 | ✅ marked verified |
+| Pack format from Mojang `version.json` `pack_version` (local jar or HTTP range read of the client jar's zip directory) | ✅ 1.20.1 = 15, 1.20.4 = 22/26, 1.21.1 = 34/48 |
+| `source: "loader"`: NeoForge 1.20.4 (88 s first run), 1.20.2 (140 s), Forge 1.20.1 (68 s); ≈ 0.9 s cached | ✅ |
+| Windows / macOS | ⚠️ not executed here: unit tests with injected platforms + a CI matrix (`.github/workflows/ci.yml`, ubuntu/windows/macos) |
 
 ### M4 verification (2026-10-10)
 
@@ -383,22 +417,20 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 - ~~**0.5 — token economy:** outline-first `get_class`, paging and caps everywhere; content/mixin generation removed.~~ ✅
 - ~~**0.6 — Mixin docs:** Mixin / MixinExtras / Fabric mixin docs in `docs_search` (`topic`, `sources`); `run_client` / `run_server` removed.~~ ✅
 - ~~**0.7 — bring your own project:** `create_project` removed; detection from MDK build files.~~ ✅
-- **Next (proposal):** richer source navigation (callers/usages), multi-loader (Architectury-style) project detection.
+- ~~**0.8 — navigation & robustness:** usages/hierarchy/overrides, text search via lazy decompilation, `source: "loader"`, multi-project builds, real Java parser + LVT checks, pack format from `version.json`, docs 404/fallback labels, cross-platform JDK discovery, lazy tool loading (−27 % `tools/list` tokens).~~ ✅
+- **Next (proposal):** scope-aware `@Local` checks, MixinExtras expression checks.
 
 ### Known limitations
 
-- Text search in `search_mc_source` needs a sources jar (project index with sources, e.g. Loom/MDG); decompiled sources are per class.
+- `source: "loader"` needs a published official MDK for that version (not yet for Forge 26.x); the first run takes 1–2.5 minutes of Gradle setup.
+- Text search over decompiled code cannot find comments, and Vineflower's local variable names may differ from the sources jar; one call decompiles at most 40 candidate classes (call again to continue).
 - `check_profiles` compares only what the references publish. For example, the Forge 1.20.1 MDK has no Gradle wrapper in `mdk/`, and newer Forge branches may not be found.
-- `docs_search` Mixin wikis need `git` on the PATH (shallow clone into the cache); without it those sources are reported as unavailable and the rest still works. Fabric wiki pages are DokuWiki markup converted heuristically (headings, code, links).
+- `docs_search` Mixin wikis: with `git` FFN shallow-clones them; without it it crawls the rendered wiki from Home/_Sidebar, which reaches only linked pages (17 of 19 Mixin wiki pages). Fabric wiki pages are DokuWiki markup converted heuristically (headings, code, links).
 - `docs_search`: Fabric docs pull code from `reference/` files (`@[code]` includes); those snippets show as include
-  markers, not code. Forge has no 26.x docs, so the closest set (1.21.x) is used and FFN says so.
-- `@ModifyVariable` LOAD/STORE checks work by slot and type. Name checks need a local variable table, which Mojang jars do not have.
-  `@Slice` checks support INVOKE/FIELD/NEW/CONSTANT/JUMP/HEAD/RETURN/TAIL anchors. MixinExtras expressions are not checked.
-- The Java parser for mixin classes is heuristic: it handles normal mixin code, but not every Java construct.
-- The vanilla index does not contain loader patches. Use the project index for Forge/NeoForge-patched methods.
-- NeoForge 1.20.2–1.21.0: the maximum Mixin compatibility level is not verified (no warning is given).
-- Project detection reads the root project's build files; multi-loader layouts (Architectury, MultiLoader-Template with `common/` + per-loader subprojects) are not detected as such — point `projectDir` at the loader subproject if it has its own `gradle.properties`, or expect an error.
-- FFN no longer launches the game (`run_client` / `run_server` were removed in 0.6.0); runtime behaviour is checked by running the game yourself.
+  markers, not code. Forge has no 26.x docs, so the closest set (1.21.x) is used and every such result is labelled `FALLBACK`.
+- `@Local` / `@ModifyVariable` name checks need a local variable table, which Mojang jars do not have; checks are not scope-aware at the injection point (a local declared later in the method still matches). MixinExtras expressions are not checked.
+- Windows and macOS support is unit-tested with simulated platforms and covered by CI, but was not run on real machines here. The Architectury layout is covered by fixture tests, not by a compiled template.
+- FFN does not launch the game; runtime behaviour is checked by running it yourself.
 - `get_class method=…` finds methods in the source with a lightweight brace-matching parser; overloads are matched by simple parameter type names.
 
 ---
@@ -423,25 +455,31 @@ Parchment и Gradle-плагинов берутся из официальных 
 с правилом `since: "<версия>"` в папку пользовательских профилей (`~/.config/ffn/profiles`, на Windows
 `%APPDATA%\ffn\profiles`, или путь из `FFN_PROFILES_DIR`) — пересобирать сервер не нужно.
 
-**Сейчас работают (0.7.0):**
+**Сейчас работают (0.8.0):**
 
 - `list_versions`, `get_profile`.
 - **Свой проект:** FFN больше не создаёт проекты (`create_project` удалён в 0.7.0) — скачайте официальный MDK и передайте его папку в `projectDir`. Загрузчик, версия Minecraft, маппинги и mod id определяются по файлам самого проекта: плагин Gradle в `build.gradle(.kts)` (Loom, ModDevGradle, NeoGradle, ForgeGradle), `gradle.properties` (`minecraft_version`, `neo_version`/`forge_version`, `yarn_mappings`, `parchment_*`, `mapping_channel`, `mod_id`), `fabric.mod.json`/`mods.toml`. Комментарии и шаблонные плейсхолдеры (`${...}`, `@MC_VERSION@`) игнорируются; `.ffn/project.json` не нужен.
-- `gradle_build`: сборка с автоматическим выбором JDK, таймаутом, логом в `.ffn/logs` и кратким разбором ошибок (файл:строка, Mixin, зависимости, версия Java).
+- **Многомодульные проекты** (MultiLoader-Template, Architectury): подпроекты из `settings.gradle`, загрузчик каждого (`common` — общий), Gradle запускается из корня с путём подпроекта, classpath и проверка миксинов — по каждому подпроекту.
+- `gradle_build`: сборка с автоматическим выбором JDK (с учётом версии Gradle wrapper; поиск JDK на Linux, macOS — `java_home -V`, Windows — реестр и `Program Files`), таймаутом, логом в `.ffn/logs` и кратким разбором ошибок (файл:строка, Mixin, зависимости, версия Java).
 - `analyze_crash`: разбор крэш-репорта или лога с указанием мода-виновника.
 - `search_mc_source`, `get_class`, `translate_mapping`: индекс классов конкретной версии (ванильный или из проекта, с патчами загрузчика), исходники через sources jar или Vineflower, перевод имён Mojmap ↔ Yarn ↔ Intermediary ↔ SRG.
   - `get_class` по умолчанию отдаёт **outline**: заголовок, поля и сигнатуры методов с JVM-дескрипторами (готовые селекторы для Mixin), без тел;
-  - `method="имя"` — исходник только этого метода; `detail="full"` — полный исходник постранично (по 300 строк, с подсказкой `offset=`).
+  - `method="имя"` — исходник только этого метода; `detail="full"` — полный исходник постранично (по 300 строк, с подсказкой `offset=`);
+  - `detail="hierarchy"` — суперклассы, интерфейсы, наследники, а с `method` — где метод переопределён;
+  - `search_mc_source kind="usages"` — где вызывается метод / используется поле или класс (по байткоду);
+  - текстовый поиск работает и без sources jar (ленивая декомпиляция Vineflower пачками);
+  - `source="loader"` — классы с патчами Forge/NeoForge без своего проекта (через кэшированный официальный MDK).
 - `mixin_targets`, `mixin_validate`:
   - точки инъекции берутся из байткода и выводятся кратко (с `methodFilter`), списки постраничные;
   - подсказки по событиям загрузчика (их можно дополнить файлами в `<FFN_PROFILES_DIR>/hints/`);
   - проверка конфигов, селекторов, `@At` и сигнатур обработчиков по реальным классам;
-  - подробные проверки `@At` CONSTANT/JUMP/LOAD/STORE/NEW и `@Slice`.
+  - подробные проверки `@At` CONSTANT/JUMP/LOAD/STORE/NEW и `@Slice`;
+  - настоящий Java-парсер для классов миксинов; `@Local` и `@ModifyVariable(name=…)` сверяются с таблицей локальных переменных, если она есть в jar.
 - `docs_search` — поиск по официальной документации Fabric/Forge/NeoForge, праймерам NeoForged и анонсам Fabric:
   - набор документации выбирается под версию;
   - найденное кэшируется;
   - результаты содержат фрагменты и код, а каждая ссылка проверена на существование;
-  - документация по Mixin: вики SpongePowered Mixin, вики MixinExtras, страницы Fabric wiki `tutorial:mixin*` и раздел `develop/mixins` Fabric docs. Она не привязана к версии Minecraft (`versioned: false`), ищется всегда и показывается без метки версии. Параметр `topic: "mixin"` ограничивает поиск только ею, `sources: [...]` — конкретными источниками. Вики скачиваются через `git clone --depth 1` (нужен установленный git).
+  - документация по Mixin: вики SpongePowered Mixin, вики MixinExtras, страницы Fabric wiki `tutorial:mixin*` и раздел `develop/mixins` Fabric docs. Она не привязана к версии Minecraft (`versioned: false`), ищется всегда и показывается без метки версии. Параметр `topic: "mixin"` ограничивает поиск только ею, `sources: [...]` — конкретными источниками. Вики скачиваются через `git clone --depth 1`, а без git — обходом страниц вики. Страницы с 404 пропускаются, результаты из ближайшей версии (например, Forge для 26.x) помечены `FALLBACK`.
 
 - `check_profiles` сравнивает профили с официальными fabric-example-mod, NeoForge/Forge MDK, Gradle и метаданными плагинов, а также с новыми релизами Minecraft:
   - показывает, что устарело или не проверено;
@@ -456,7 +494,9 @@ Parchment и Gradle-плагинов берутся из официальных 
 
 **Ограничения:**
 
-- текстовый поиск работает только с sources jar;
-- ванильный индекс не видит патчей Forge/NeoForge;
+- `source="loader"` требует опубликованного официального MDK; первый запуск — 1–2,5 минуты;
+- в декомпилированном коде нет комментариев; за один вызов декомпилируется не больше 40 классов;
+- проверки `@Local` не учитывают область видимости; у jar Mojang нет таблицы локальных переменных;
+- Windows и macOS проверены юнит-тестами и CI, но не на реальных машинах.
 
-**Дальше (предложение):** Kotlin DSL, навигация по исходникам (вызовы/использования).
+**Дальше (предложение):** проверки `@Local` с учётом области видимости, проверка выражений MixinExtras.
