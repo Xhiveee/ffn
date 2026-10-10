@@ -36,7 +36,7 @@ export const STUBS: StubSpec[] = [
 ];
 
 export function notImplementedMessage(s: StubSpec): string {
-  return `Tool "${s.name}" is not implemented yet in FFN 0.1 (planned for milestone ${s.milestone}). Meanwhile: ${s.meanwhile}`;
+  return `Tool "${s.name}" is not implemented yet in FFN 0.3 (planned for milestone ${s.milestone}). Meanwhile: ${s.meanwhile}`;
 }
 
 export function registerStubs(server: McpServer): void {

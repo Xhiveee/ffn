@@ -12,7 +12,7 @@ import { registerDocsTools } from "./tools/docs.js";
 import { registerStubs } from "./tools/stubs.js";
 
 export const SERVER_NAME = "ffn";
-export const SERVER_VERSION = "0.2.0";
+export const SERVER_VERSION = "0.3.0";
 
 const INSTRUCTIONS = `FFN (ForgeFabricNeoForge) helps you build Minecraft mods for Forge, Fabric and NeoForge (Minecraft 1.20.1 → latest).
 - Never guess versions: call list_versions (live data) and get_profile before writing build files.

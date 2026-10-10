@@ -41,6 +41,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FfnConfig {
     cacheTtlMs: (Number.isFinite(ttlMin) && ttlMin >= 0 ? ttlMin : 360) * 60_000,
     offline: env.FFN_OFFLINE === "1" || env.FFN_OFFLINE === "true",
     // Some hosts (e.g. maven.minecraftforge.net) reject generic/blank user agents.
-    userAgent: env.FFN_USER_AGENT ?? "FFN-MCP/0.2 (Minecraft modding MCP server; +https://github.com/)",
+    userAgent: env.FFN_USER_AGENT ?? "FFN-MCP/0.3 (Minecraft modding MCP server; +https://github.com/)",
   };
 }

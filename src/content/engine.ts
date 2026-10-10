@@ -244,8 +244,9 @@ export async function planContent(services: Services, req: GenerateRequest, onPr
     }
   }
   const settings = resolveSettings(catalog.rules, mc, lookup.profile.obfuscated);
-  const def: KindDef | undefined = catalog.kinds[req.kind];
-  if (!def) throw new GenerateError(`Unknown content kind "${req.kind}" for ${catalogLoader}. Available: ${Object.keys(catalog.kinds).sort().join(", ")}.`);
+  const isInternal = (k: string) => k.startsWith("_") || (catalog.kinds[k]?.description ?? "").startsWith("[common]");
+  const def: KindDef | undefined = isInternal(req.kind) ? undefined : catalog.kinds[req.kind];
+  if (!def) throw new GenerateError(`Unknown content kind "${req.kind}" for ${catalogLoader}. Available: ${Object.keys(catalog.kinds).filter((k) => !isInternal(k)).sort().join(", ")}.`);
 
   const checks = new Map<string, SymbolCheck>();
   const verify = (spec: string, why?: string) => {
