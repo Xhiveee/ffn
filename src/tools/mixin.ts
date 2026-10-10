@@ -61,23 +61,40 @@ type V = z.infer<z.ZodObject<typeof mixinValidateInput>>;
 type T = z.infer<z.ZodObject<typeof mixinTargetsInput>>;
 
 export async function mixinValidate(services: Services, a: V) {
-  const { ctx, notes } = await mixinContext(services, a.projectDir, a.source);
-  const { configs, issues } = await validateProject(ctx, { mixinClass: a.mixinClass });
-  await suggestFromOtherMappings(services, ctx, issues, notes);
+  const project = await readProjectInfo(a.projectDir);
+  // Multi-project root (common + loader subprojects): validate each subproject against its own classpath.
+  const units = project.subprojects && project.classpathProject !== ":" ? project.subprojects.map((x) => x.dir) : [project.dir];
+  const runs: { label?: string; ctx: ValidateContext; configs: Awaited<ReturnType<typeof validateProject>>["configs"]; issues: MixinIssue[]; notes: string[] }[] = [];
+  for (const dir of units) {
+    if (units.length > 1 && !(await readProjectInfo(dir)).mixinConfigs.length) continue;
+    const { ctx, notes } = await mixinContext(services, dir, a.source);
+    const { configs, issues } = await validateProject(ctx, { mixinClass: a.mixinClass });
+    await suggestFromOtherMappings(services, ctx, issues, notes);
+    runs.push({ label: units.length > 1 ? ctx.project.gradlePath : undefined, ctx, configs, issues, notes });
+  }
+  if (!runs.length) return okText(`No *.mixins.json in any subproject of ${project.dir}.`);
+  const issues = runs.flatMap((r) => (r.label ? r.issues.map((i) => ({ ...i, file: i.file ? `${r.label}: ${i.file}` : r.label })) : r.issues));
   const shown = a.includeInfo ? issues : issues.filter((i) => i.severity !== "info");
   const s = summarize(issues);
-  const m = ctx.index.meta;
-  const data = {
-    checkedAgainst: `Minecraft ${m.mcVersion}, ${m.namespace} names, ${m.kind === "vanilla" ? "vanilla jar" : `${m.loader ?? "project"} jar`}`,
-    ...s,
-    configs: configs.map((c) => ({
-      file: c.file, registered: c.registered, compatibilityLevel: c.compatibilityLevel,
-      mixins: c.mixins.map((x) => `${x.name} [${x.section}]${x.errors ? ` ${x.errors} error(s)` : ""}${x.warnings ? ` ${x.warnings} warning(s)` : ""}`),
-    })),
-    issues: shown.map((i) => ({ ...i, missing: undefined })),
-    notes,
+  const against = (r: (typeof runs)[number]) => {
+    const m = r.ctx.index.meta;
+    return `${r.label ? `${r.label}: ` : ""}Minecraft ${m.mcVersion}, ${m.namespace} names, ${m.kind === "vanilla" ? "vanilla jar" : `${m.loader ?? "project"} jar`}`;
   };
-  const head = s.errors ? `Mixin validation FAILED: ${s.errors} error(s), ${s.warnings} warning(s).` : `Mixin validation passed (${configs.reduce((n, c) => n + c.mixins.length, 0)} mixin(s) checked${s.warnings ? `, ${s.warnings} warning(s)` : ""}).`;
+  const data = {
+    checkedAgainst: runs.length > 1 ? runs.map(against) : against(runs[0]!),
+    ...s,
+    configs: runs.flatMap((r) =>
+      r.configs.map((c) => ({
+        file: r.label ? `${r.label}: ${c.file}` : c.file, registered: c.registered, compatibilityLevel: c.compatibilityLevel,
+        mixins: c.mixins.map((x) => `${x.name} [${x.section}]${x.errors ? ` ${x.errors} error(s)` : ""}${x.warnings ? ` ${x.warnings} warning(s)` : ""}`),
+      })),
+    ),
+    issues: shown.map((i) => ({ ...i, missing: undefined })),
+    notes: [...new Set(runs.flatMap((r) => r.notes))],
+  };
+  const n = runs.reduce((k, r) => k + r.configs.reduce((x, c) => x + c.mixins.length, 0), 0);
+  const where = runs.length > 1 ? ` in ${runs.length} subprojects` : "";
+  const head = s.errors ? `Mixin validation FAILED: ${s.errors} error(s), ${s.warnings} warning(s)${where}.` : `Mixin validation passed (${n} mixin(s) checked${where}${s.warnings ? `, ${s.warnings} warning(s)` : ""}).`;
   return { ...ok(head, data), isError: s.errors > 0 };
 }
 

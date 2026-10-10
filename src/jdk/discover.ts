@@ -131,10 +131,12 @@ export interface JdkChoice {
  * Pick the JDK that runs Gradle: the smallest full JDK whose major >= required
  * (an exact match is preferred; newer JDKs can break older Gradle versions).
  */
-export function pickJdk(all: JdkInfo[], required: number, reason: string): JdkChoice {
+export function pickJdk(all: JdkInfo[], required: number, reason: string, max?: number): JdkChoice {
   const jdks = all.filter((j) => j.isJdk);
   const exact = jdks.find((j) => j.major === required);
-  const newer = jdks.filter((j) => j.major > required).sort((a, b) => a.major - b.major)[0];
+  const newers = jdks.filter((j) => j.major > required).sort((a, b) => a.major - b.major);
+  // prefer a JDK the build's Gradle can still run on
+  const newer = newers.find((j) => !max || j.major <= max) ?? newers[0];
   const jdk = exact ?? newer;
   if (jdk) return { jdk, required, reason, all };
   const have = jdks.map((j) => j.major).join(", ") || "none";

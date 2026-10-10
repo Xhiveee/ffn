@@ -91,6 +91,13 @@ export class IndexService {
     const notes: string[] = [];
     let project: ProjectInfo | undefined;
     if (spec.projectDir) project = await readProjectInfo(spec.projectDir);
+    if (project?.subprojects && project.dir === project.rootDir && spec.loader) {
+      // multi-project root: the subproject for the requested loader
+      const sub = project.subprojects.find((x) => x.platform === spec.loader);
+      if (sub) project = await readProjectInfo(sub.dir);
+    }
+    if (project && project.gradlePath && project.gradlePath !== ":" ) notes.push(`Gradle subproject ${project.gradlePath}${project.platform === "common" ? " (common module)" : ""}.`);
+    else if (project?.subprojects && project.classpathProject !== ":") notes.push(`Multi-project build; using ${project.classpathProject} (pass loader= or the subproject's directory for another: ${project.subprojects.map((x) => `${x.path}${x.platform ? `=${x.platform}` : ""}`).join(", ")}).`);
     const mc = spec.mcVersion ?? project?.mcVersion;
     if (!mc) throw new Error("Give mcVersion or projectDir.");
     if (project && spec.mcVersion && spec.mcVersion !== project.mcVersion) notes.push(`mcVersion ${spec.mcVersion} differs from the project's ${project.mcVersion}; using ${spec.mcVersion}.`);
@@ -285,24 +292,32 @@ export class IndexService {
   // ---------------- project / toolchain ----------------
 
   async projectClasspath(project: ProjectInfo, onProgress?: (m: string) => void): Promise<string[]> {
-    const cacheFile = path.join(project.dir, ".ffn", "classpath.json");
-    const stamp = ["build.gradle", "build.gradle.kts", "gradle.properties", "settings.gradle", "settings.gradle.kts"]
-      .map((f) => path.join(project.dir, f))
+    const root = project.rootDir ?? project.dir;
+    const want = project.classpathProject ?? ":";
+    const pick = (byProject: Record<string, string[]>) => byProject[want] ?? byProject[":"] ?? [...new Set(Object.values(byProject).flat())];
+    const cacheFile = path.join(root, ".ffn", "classpath.json");
+    const subs = project.subprojects ?? (root !== project.dir ? (await readProjectInfo(root)).subprojects : undefined) ?? [];
+    const dirs = [root, ...subs.map((x) => x.dir)];
+    const stamp = dirs
+      .flatMap((d) => ["build.gradle", "build.gradle.kts", "gradle.properties", "settings.gradle", "settings.gradle.kts"].map((f) => path.join(d, f)))
       .filter(existsSync)
       .map((f) => `${f}:${statSync(f).mtimeMs}`)
-      .concat("cp2") // bump when the classpath query changes (cp2: + clientCompileClasspath)
+      .concat("cp3") // bump when the classpath query changes (cp2: + clientCompileClasspath; cp3: per subproject)
       .join(";");
     if (existsSync(cacheFile)) {
-      const c = JSON.parse(await readFile(cacheFile, "utf8")) as { stamp: string; files: string[] };
-      if (c.stamp === stamp && c.files.every((f) => existsSync(f))) return c.files;
+      const c = JSON.parse(await readFile(cacheFile, "utf8")) as { stamp: string; byProject?: Record<string, string[]> };
+      if (c.stamp === stamp && c.byProject) {
+        const files = pick(c.byProject);
+        if (files.every((f) => existsSync(f))) return files;
+      }
     }
     onProgress?.("Asking Gradle for the project's compile classpath (first time can take minutes)…");
     const { runGradle } = await import("../tools/gradle.js");
-    const init = path.join(project.dir, ".ffn", "ffn-classpath.gradle");
+    const init = path.join(root, ".ffn", "ffn-classpath.gradle");
     await mkdir(path.dirname(init), { recursive: true });
     await writeFile(init, CLASSPATH_INIT);
     const run = await runGradle(this.services, {
-      projectDir: project.dir,
+      projectDir: root,
       tasks: ["ffnPrintClasspath"],
       args: ["--init-script", init, "--no-configuration-cache", "-q"],
       timeoutSec: 1800,
@@ -313,10 +328,10 @@ export class IndexService {
     if (run.result.exitCode !== 0) throw new Error(`Gradle failed while resolving the classpath: ${run.diagnosis.summary} (log: ${run.result.logFile})`);
     const text = await readFile(run.result.logFile, "utf8");
     const entries = [...text.matchAll(/^FFN-CP:([^|]*)\|(.+)$/gm)].map((m) => ({ project: m[1]!, file: m[2]!.trim() }));
-    const rootFiles = entries.filter((e) => e.project === ":").map((e) => e.file);
-    const files = [...new Set(rootFiles.length ? rootFiles : entries.map((e) => e.file))];
-    await writeFile(cacheFile, JSON.stringify({ stamp, files }, null, 1));
-    return files;
+    const byProject: Record<string, string[]> = {};
+    for (const e of entries) (byProject[e.project] ??= []).includes(e.file) || byProject[e.project]!.push(e.file);
+    await writeFile(cacheFile, JSON.stringify({ stamp, byProject }, null, 1));
+    return pick(byProject);
   }
 
   /** First jar on the classpath containing the given Minecraft class. */

@@ -21,6 +21,80 @@ export interface ProjectInfo {
   mixinConfigs: string[];
   javaSourceRoots: string[];
   resourceRoots: string[];
+  /** Gradle root (settings.gradle, gradlew); equals dir for single-project builds. */
+  rootDir?: string;
+  /** Gradle path of this project (":" root, ":fabric"). */
+  gradlePath?: string;
+  /** Gradle project whose compile classpath describes this project (a platform subproject for a multi-project root). */
+  classpathProject?: string;
+  /** "common" for the shared module of a multi-loader build (loader then = a sibling platform, for profile lookups). */
+  platform?: Loader | "common";
+  /** Multi-project builds: subprojects from settings.gradle with the platform each targets. */
+  subprojects?: SubprojectInfo[];
+}
+
+export interface SubprojectInfo {
+  path: string;
+  dir: string;
+  platform?: Loader | "common";
+}
+
+/**
+ * Subprojects declared in settings.gradle(.kts): include 'a', include(":b:c"), include("x", "y"),
+ * Architectury-style loops over enabled_platforms, and project(':x').projectDir = file('dir') overrides.
+ */
+export function parseSettingsIncludes(text: string, props: Record<string, string> = {}): { path: string; dir: string }[] {
+  const src = stripComments(text);
+  const paths: string[] = [];
+  for (const m of src.matchAll(/\binclude\b\s*\(?((?:\s*['"][^'"]+['"]\s*,?)+)\)?/g)) for (const q of m[1]!.matchAll(/['"]([^'"]+)['"]/g)) paths.push(q[1]!);
+  if (/enabled_platforms/.test(src) && props.enabled_platforms) paths.push(...props.enabled_platforms.split(",").map((x) => x.trim()).filter(Boolean));
+  const dirs = new Map<string, string>();
+  for (const m of src.matchAll(/project\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\.projectDir\s*=\s*(?:file|new File)\s*\(\s*(?:settingsDir\s*,\s*|rootDir\s*,\s*)?['"]([^'"]+)['"]/g)) dirs.set(m[1]!.replace(/^:?/, ":"), m[2]!);
+  const out = new Map<string, string>();
+  for (const raw of paths) {
+    const p = raw.replace(/^:?/, ":");
+    out.set(p, dirs.get(p) ?? p.slice(1).replace(/:/g, "/"));
+  }
+  return [...out].map(([p, dir]) => ({ path: p, dir }));
+}
+
+const PLATFORM_NAMES: [RegExp, Loader | "common"][] = [
+  [/neoforge/i, "neoforge"],
+  [/forge/i, "forge"],
+  [/fabric|quilt/i, "fabric"],
+  [/common|shared|core|xplat/i, "common"],
+];
+
+/** Which platform a subproject targets: Architectury `architectury { fabric() }`, loader plugins, else its name. */
+export async function subprojectPlatform(dir: string, name: string): Promise<Loader | "common" | undefined> {
+  const build = stripComments((await readText(path.join(dir, "build.gradle"))) ?? (await readText(path.join(dir, "build.gradle.kts"))) ?? "");
+  const arch = /architectury\s*\{([^}]*)\}/.exec(build)?.[1] ?? "";
+  if (/\bcommon\s*\(/.test(arch)) return "common";
+  if (/\bneoForge\s*\(/.test(arch)) return "neoforge";
+  if (/\bforge\s*\(/.test(arch)) return "forge";
+  if (/\bfabric\s*\(/.test(arch)) return "fabric";
+  for (const [re, p] of PLATFORM_NAMES) if (re.test(name)) return p;
+  if (/net\.neoforged\.moddev\.legacyforge|net\.minecraftforge\.gradle/.test(build)) return "forge";
+  if (/net\.neoforged\.(moddev|gradle)/.test(build)) return /neoFormVersion|neoForm\s*\{/.test(build) ? "common" : "neoforge";
+  if (/fabric-loom|fabricmc\.loom/.test(build)) return "fabric";
+  if (/org\.spongepowered\.gradle\.vanilla/.test(build)) return "common";
+  return undefined;
+}
+
+/** The Gradle root containing dir: the nearest ancestor (max 3 up) whose settings.gradle includes dir. */
+export async function findGradleRoot(dir: string): Promise<string> {
+  let cur = dir;
+  for (let i = 0; i < 3; i++) {
+    const up = path.dirname(cur);
+    if (up === cur) break;
+    const settings = (await readText(path.join(up, "settings.gradle"))) ?? (await readText(path.join(up, "settings.gradle.kts")));
+    if (settings) {
+      const props = parseProperties((await readText(path.join(up, "gradle.properties"))) ?? "");
+      if (parseSettingsIncludes(settings, props).some((s) => path.resolve(up, s.dir) === dir)) return up;
+    }
+    cur = up;
+  }
+  return dir;
 }
 
 export function parseProperties(text: string): Record<string, string> {
@@ -53,14 +127,10 @@ async function findFiles(dir: string, pred: (name: string) => boolean, depth = 6
   return out;
 }
 
-export async function sourceSets(dir: string): Promise<{ java: string[]; resources: string[] }> {
+export async function sourceSets(dir: string, subDirs: string[] = []): Promise<{ java: string[]; resources: string[] }> {
   const java: string[] = [];
   const resources: string[] = [];
-  const srcDirs = [path.join(dir, "src")];
-  // multi-project layouts (common/fabric/forge) — one level deep
-  for (const sub of existsSync(dir) ? await readdir(dir, { withFileTypes: true }) : []) {
-    if (sub.isDirectory() && existsSync(path.join(dir, sub.name, "src")) && sub.name !== "src") srcDirs.push(path.join(dir, sub.name, "src"));
-  }
+  const srcDirs = [path.join(dir, "src"), ...subDirs.map((d) => path.join(d, "src"))];
   for (const src of srcDirs) {
     if (!existsSync(src)) continue;
     for (const set of await readdir(src, { withFileTypes: true })) {
@@ -110,11 +180,11 @@ interface Detected {
  * Fabric example mod declare them (gradle.properties keys, plugin ids in build.gradle(.kts)/settings.gradle(.kts),
  * fabric.mod.json / mods.toml). No FFN-specific file is needed.
  */
-export async function detectProject(dir: string, props: Record<string, string>, mixinConfigs: string[], resourceRoots: string[]): Promise<Detected> {
+export async function detectProject(dir: string, props: Record<string, string>, mixinConfigs: string[], resourceRoots: string[], rootDir = dir, platform?: Loader): Promise<Detected> {
   const buildFile = ["build.gradle", "build.gradle.kts"].find((f) => existsSync(path.join(dir, f)));
   const build = stripComments((buildFile && (await readText(path.join(dir, buildFile)))) ?? "");
-  const settings = stripComments((await readText(path.join(dir, "settings.gradle"))) ?? (await readText(path.join(dir, "settings.gradle.kts"))) ?? "");
-  const all = `${build}\n${settings}`;
+  const settings = stripComments((await readText(path.join(rootDir, "settings.gradle"))) ?? (await readText(path.join(rootDir, "settings.gradle.kts"))) ?? "");
+  const all = rootDir === dir ? `${build}\n${settings}` : build; // a subproject's plugins are in its own build file
   const from: string[] = [];
   const resFile = async (rel: string) => {
     for (const r of resourceRoots) {
@@ -131,7 +201,8 @@ export async function detectProject(dir: string, props: Record<string, string>, 
   const modsToml = (await resFile("META-INF/neoforge.mods.toml")) ?? (await resFile("META-INF/mods.toml"));
 
   let loader: Loader | undefined;
-  if (/fabric-loom|fabricmc\.loom/.test(all)) (loader = "fabric"), from.push(`${buildFile}: Loom plugin`);
+  if (platform) (loader = platform), from.push(`subproject platform: ${platform}`);
+  else if (/fabric-loom|fabricmc\.loom/.test(all)) (loader = "fabric"), from.push(`${buildFile}: Loom plugin`);
   else if (/net\.neoforged\.moddev\.legacyforge/.test(all)) {
     // ModDevGradle "legacyforge" builds both Forge 1.20.1 MDKs and NeoForge's 1.20.1 (net.neoforged:forge)
     loader = props.neo_version || /neoForge\s*\{|net\.neoforged:forge/.test(all) ? "neoforge" : "forge";
@@ -192,9 +263,21 @@ export async function detectProject(dir: string, props: Record<string, string>, 
 export async function readProjectInfo(dirIn: string): Promise<ProjectInfo> {
   const dir = path.resolve(dirIn);
   if (!existsSync(dir)) throw new Error(`Project directory not found: ${dir}`);
-  const sets = await sourceSets(dir);
+  const rootDir = await findGradleRoot(dir);
+  const rootProps = parseProperties((await readText(path.join(rootDir, "gradle.properties"))) ?? "");
+  const props = rootDir === dir ? rootProps : { ...rootProps, ...parseProperties((await readText(path.join(dir, "gradle.properties"))) ?? "") };
+  const settings = (await readText(path.join(rootDir, "settings.gradle"))) ?? (await readText(path.join(rootDir, "settings.gradle.kts"))) ?? "";
+  const subprojects: SubprojectInfo[] = [];
+  for (const inc of parseSettingsIncludes(settings, rootProps)) {
+    const d = path.resolve(rootDir, inc.dir);
+    if (existsSync(d)) subprojects.push({ path: inc.path, dir: d, platform: await subprojectPlatform(d, inc.path.split(":").pop()!) });
+  }
+  const isRoot = dir === rootDir;
+  const self = subprojects.find((x) => x.dir === dir);
+  const gradlePath = isRoot ? ":" : (self?.path ?? `:${path.relative(rootDir, dir).split(path.sep).join(":")}`);
+  const sets = await sourceSets(dir, isRoot ? subprojects.map((x) => x.dir) : []);
   const mixinConfigs = (await Promise.all(sets.resources.map((r) => findFiles(r, (n) => /mixins.*\.json$|\.mixins\.json$/.test(n), 2)))).flat();
-  const props = parseProperties((await readText(path.join(dir, "gradle.properties"))) ?? "");
+  const base = { dir, rootDir, gradlePath, mixinConfigs, javaSourceRoots: sets.java, resourceRoots: sets.resources, ...(isRoot && subprojects.length ? { subprojects } : {}) };
 
   const ffn = await readText(path.join(dir, ".ffn", "project.json"));
   if (ffn) {
@@ -202,13 +285,43 @@ export async function readProjectInfo(dirIn: string): Promise<ProjectInfo> {
       loader: Loader; mcVersion: string; mappings: Mappings; modId?: string; profile?: { java?: number; gradleJvm?: number };
     };
     return {
-      dir, loader: j.loader, mcVersion: props.minecraft_version ?? j.mcVersion, mappings: j.mappings, modId: j.modId,
+      ...base, loader: j.loader, mcVersion: props.minecraft_version ?? j.mcVersion, mappings: j.mappings, modId: j.modId,
       mappingsVersion: props.yarn_mappings ?? props.parchment_mappings_version,
-      source: "ffn", java: j.profile?.java, gradleJvm: j.profile?.gradleJvm,
-      mixinConfigs, javaSourceRoots: sets.java, resourceRoots: sets.resources,
+      source: "ffn", java: j.profile?.java, gradleJvm: j.profile?.gradleJvm, classpathProject: gradlePath,
     };
   }
 
-  const d = await detectProject(dir, props, mixinConfigs, sets.resources);
-  return { dir, ...d, mixinConfigs, javaSourceRoots: sets.java, resourceRoots: sets.resources };
+  const platforms = subprojects.filter((x) => x.platform && x.platform !== "common");
+  if (isRoot && subprojects.length) {
+    // Multi-project root: use the root's own setup if it is a mod, else the first platform subproject.
+    try {
+      const d = await detectProject(dir, props, mixinConfigs, sets.resources);
+      if (existsSync(path.join(dir, "src"))) return { ...base, ...d, classpathProject: ":" };
+    } catch {
+      /* fall through to a subproject */
+    }
+    const primary = platforms[0] ?? subprojects[0]!;
+    const sub = await readProjectInfo(primary.dir);
+    return { ...base, loader: sub.loader, mcVersion: sub.mcVersion, mappings: sub.mappings, modId: sub.modId, mappingsVersion: sub.mappingsVersion, source: "inferred", detectedFrom: [`multi-project: ${subprojects.map((x) => `${x.path}${x.platform ? `=${x.platform}` : ""}`).join(", ")}; defaults to ${primary.path}`, ...(sub.detectedFrom ?? [])], classpathProject: primary.path };
+  }
+  const siblings = isRoot ? [] : (await readProjectInfoSiblings(rootDir, rootProps, settings));
+  const platform = self?.platform ?? (isRoot ? undefined : await subprojectPlatform(dir, path.basename(dir)));
+  let d: Detected;
+  try {
+    d = await detectProject(dir, props, mixinConfigs, sets.resources, rootDir, platform && platform !== "common" ? platform : undefined);
+  } catch (e) {
+    if (platform !== "common" || !props.minecraft_version) throw e;
+    d = { loader: siblings[0] ?? "fabric", mcVersion: props.minecraft_version, mappings: props.parchment_mappings_version || props.parchment_version ? "parchment" : "mojmap", source: "inferred", detectedFrom: [`gradle.properties: minecraft_version=${props.minecraft_version}`] };
+  }
+  if (!isRoot) d.detectedFrom = [`subproject ${gradlePath} of ${rootDir}${platform ? ` (${platform})` : ""}`, ...d.detectedFrom];
+  return { ...base, ...d, classpathProject: gradlePath, ...(platform === "common" ? { platform } : {}) };
+}
+
+async function readProjectInfoSiblings(rootDir: string, rootProps: Record<string, string>, settings: string): Promise<Loader[]> {
+  const out: Loader[] = [];
+  for (const inc of parseSettingsIncludes(settings, rootProps)) {
+    const p = await subprojectPlatform(path.resolve(rootDir, inc.dir), inc.path.split(":").pop()!);
+    if (p && p !== "common") out.push(p);
+  }
+  return out;
 }

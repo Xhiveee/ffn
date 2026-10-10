@@ -41,26 +41,58 @@ export interface GradleRun {
   warnings: string[];
 }
 
-async function requiredJvm(services: Services, info: ProjectInfo, warnings: string[]): Promise<{ jvm: number; why: string }> {
+/** Gradle version from the project's wrapper properties. */
+export async function wrapperGradleVersion(root: string): Promise<string | undefined> {
+  try {
+    const t = await readFile(path.join(root, "gradle", "wrapper", "gradle-wrapper.properties"), "utf8");
+    return /gradle-(\d+(?:\.\d+)+(?:-rc-\d+)?)-(?:bin|all)\.zip/.exec(t)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Newest Java a Gradle version can run on (Gradle's compatibility matrix). */
+export function gradleMaxJvm(v: string): number {
+  const [maj = 0, min = 0] = v.split(".").map(Number);
+  const n = maj * 100 + min;
+  const table: [number, number][] = [[901, 25], [814, 24], [810, 23], [808, 22], [805, 21], [803, 20], [706, 19], [705, 18], [703, 17], [700, 16], [608, 15], [607, 15], [603, 14], [0, 11]];
+  if (maj >= 10) return 99;
+  return table.find(([g]) => n >= g)![1];
+}
+
+const versionGte = (a: string, b: string) => {
+  const x = a.split(".").map(Number);
+  const y = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return true;
+};
+
+async function requiredJvm(services: Services, info: ProjectInfo, warnings: string[]): Promise<{ jvm: number; max?: number; why: string }> {
+  const wrapper = await wrapperGradleVersion(info.rootDir ?? info.dir);
+  const max = wrapper ? gradleMaxJvm(wrapper) : undefined;
+  const cap = (jvm: number, why: string) => (max && jvm > max ? { jvm: max, max, why: `${why} Capped at JDK ${max}: the newest Gradle ${wrapper} runs on.` } : { jvm, max, why });
   try {
     const { profile } = await lookupProfile(services, info.loader, info.mcVersion);
-    const jvm = Math.max(profile.java, profile.gradle.minJvm ?? 17);
-    return {
-      jvm,
-      why: `${info.loader} ${info.mcVersion} targets Java ${profile.java}${profile.gradle.minJvm && profile.gradle.minJvm > profile.java ? ` and its Gradle plugin needs JDK ${profile.gradle.minJvm} to run` : ""}.`,
-    };
+    // minJvm belongs to the plugin version the profile pins; only enforce it when the project's Gradle is that new.
+    const minJvm = profile.gradle.minJvm && (!wrapper || versionGte(wrapper, profile.gradle.version)) ? profile.gradle.minJvm : 0;
+    const jvm = Math.max(profile.java, minJvm);
+    return cap(jvm, `${info.loader} ${info.mcVersion} targets Java ${profile.java}${minJvm > profile.java ? ` and its Gradle plugin needs JDK ${minJvm} to run` : ""}.`);
   } catch (e) {
-    if (info.gradleJvm) return { jvm: info.gradleJvm, why: `From .ffn/project.json (profile lookup failed: ${(e as Error).message}).` };
+    if (info.gradleJvm) return cap(info.gradleJvm, `From .ffn/project.json (profile lookup failed: ${(e as Error).message}).`);
     warnings.push(`Could not resolve the profile (${(e as Error).message}); assuming JDK 21.`);
-    return { jvm: 21, why: "Fallback." };
+    return cap(21, "Fallback.");
   }
 }
 
 export async function runGradle(services: Services, o: GradleRunOptions): Promise<GradleRun | { error: string }> {
   const project = await readProjectInfo(o.projectDir);
   const warnings: string[] = [];
-  const wrapper = path.join(project.dir, process.platform === "win32" ? "gradlew.bat" : "gradlew");
-  if (!existsSync(wrapper)) return { error: `No Gradle wrapper (${path.basename(wrapper)}) in ${project.dir}.` };
+  const root = project.rootDir ?? project.dir;
+  const wrapper = path.join(root, process.platform === "win32" ? "gradlew.bat" : "gradlew");
+  if (!existsSync(wrapper)) return { error: `No Gradle wrapper (${path.basename(wrapper)}) in ${root}.` };
+  // a subproject directory: run from the root and qualify bare task names (":fabric:build")
+  const sub = project.gradlePath && project.gradlePath !== ":" ? project.gradlePath : undefined;
+  const tasks = o.tasks.map((t) => (sub && !t.startsWith(":") && !t.startsWith("-") && t !== "ffnPrintClasspath" ? `${sub}:${t}` : t));
   const req = await requiredJvm(services, project, warnings);
   const all = await discoverJdks();
   let jdk: JdkInfo | undefined;
@@ -68,15 +100,15 @@ export async function runGradle(services: Services, o: GradleRunOptions): Promis
     jdk = all.find((j) => path.resolve(j.home) === path.resolve(o.javaHome!)) ?? { home: o.javaHome, major: 0, version: "?", isJdk: true, source: "javaHome" };
     if (jdk.major && jdk.major < req.jvm) warnings.push(`javaHome is JDK ${jdk.major} but ${req.jvm}+ is required: ${req.why}`);
   } else {
-    const choice = pickJdk(all, req.jvm, req.why);
+    const choice = pickJdk(all, req.jvm, req.why, req.max);
     if (!choice.jdk) return { error: choice.missing! };
     jdk = choice.jdk;
   }
-  const ffnDir = path.join(project.dir, ".ffn");
+  const ffnDir = path.join(root, ".ffn");
   await mkdir(ffnDir, { recursive: true });
   const toolchainPaths = all.filter((j) => j.isJdk).map((j) => j.home).join(",");
   const args = [
-    ...o.tasks,
+    ...tasks,
     "--console=plain",
     ...(o.daemon ? [] : ["--no-daemon"]),
     ...(toolchainPaths ? [`-Porg.gradle.java.installations.paths=${toolchainPaths}`] : []),
@@ -93,7 +125,7 @@ export async function runGradle(services: Services, o: GradleRunOptions): Promis
   const result = await runProcess({
     command: wrapper,
     args,
-    cwd: project.dir,
+    cwd: root,
     env,
     timeoutMs: o.timeoutSec * 1000,
     logFile,

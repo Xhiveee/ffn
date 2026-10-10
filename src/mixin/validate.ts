@@ -10,6 +10,7 @@ import { ACC, parseMethodDesc, type CodeRefs, type TypedConstant } from "../inde
 import type { McIndex } from "../index/store.js";
 import type { ProjectInfo } from "../project/info.js";
 import type { ResolvedProfile } from "../profiles/schema.js";
+import { readProjectInfo } from "../project/info.js";
 import { annsOf, boolOf, classesOf, numOf, parseJava, resolveType, strOf, strsOf, type Annotation, type ParsedJava, type ParsedMember } from "./javaparse.js";
 
 export interface MixinIssue {
@@ -963,11 +964,15 @@ export async function validateProject(ctx: ValidateContext, opts: { mixinClass?:
   const { project, profile } = ctx;
   if (!project.mixinConfigs.length) issues.push({ severity: "info", message: "No *.mixins.json found in the project resources." });
   // registration sources
-  const regFiles = [
-    ...["build.gradle", "build.gradle.kts"].map((f) => path.join(project.dir, f)),
-    ...(await walk(path.join(project.dir, "src"))).filter((f) => /(fabric\.mod\.json|mods\.toml|MANIFEST\.MF)$/.test(f)),
-  ].filter(existsSync);
-  const regText = (await Promise.all(regFiles.map((f) => readFile(f, "utf8")))).join("\n");
+  // A common module's configs are registered by the loader subprojects, so look there too.
+  const regDirs = [project.dir];
+  if (project.platform === "common" && project.rootDir) regDirs.push(...((await readProjectInfo(project.rootDir)).subprojects ?? []).map((x) => x.dir));
+  const regFiles: string[] = [];
+  for (const d of regDirs) {
+    regFiles.push(...["build.gradle", "build.gradle.kts"].map((f) => path.join(d, f)), ...(await walk(path.join(d, "src"))).filter((f) => /(fabric\.mod\.json|mods\.toml|MANIFEST\.MF)$/.test(f)));
+  }
+  let regText = (await Promise.all([...new Set(regFiles)].filter(existsSync).map((f) => readFile(f, "utf8")))).join("\n");
+  if (project.modId) regText = regText.replace(/\$\{\s*(?:project\.)?(?:mod_?id|modId|MOD_ID)\s*\}/gi, project.modId);
   const allJava = (await Promise.all(project.javaSourceRoots.map((r) => walk(r)))).flat().filter((f) => f.endsWith(".java"));
   const listedFiles = new Set<string>();
 
@@ -981,8 +986,7 @@ export async function validateProject(ctx: ValidateContext, opts: { mixinClass?:
       continue;
     }
     const base = path.basename(cfgPath);
-    const modIdForm = project.modId && base === `${project.modId}.mixins.json` ? [/\$\{mod_?id\}\.mixins\.json/i, /\$\{modId\}\.mixins\.json/] : [];
-    const registered = regText.includes(base) || modIdForm.some((r) => r.test(regText));
+    const registered = regText.includes(base);
     const report: ConfigReport = { file: rel, package: json.package as string | undefined, compatibilityLevel: json.compatibilityLevel as string | undefined, registered, mixins: [] };
     configs.push(report);
     if (!registered) {

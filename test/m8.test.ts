@@ -212,3 +212,56 @@ import com.llamalad7.mixinextras.sugar.Local;
     expect(issues.find((i) => /unverifiable/.test(i.message))!.severity).toBe("info");
   });
 });
+
+describe("multi-project builds", () => {
+  it("parses settings includes", async () => {
+    const { parseSettingsIncludes } = await import("../src/project/info.js");
+    expect(parseSettingsIncludes(`rootProject.name = 'x'\ninclude('common')\ninclude 'fabric', ':neoforge'\n// include 'old'\ninclude(":forge:sub")\nproject(':forge:sub').projectDir = file('forge-sub')`)).toEqual([
+      { path: ":common", dir: "common" },
+      { path: ":fabric", dir: "fabric" },
+      { path: ":neoforge", dir: "neoforge" },
+      { path: ":forge:sub", dir: "forge-sub" },
+    ]);
+    expect(parseSettingsIncludes(`include("common")\nfor (platform in providers.gradleProperty("enabled_platforms").get().split(",")) include(platform)`, { enabled_platforms: "fabric,neoforge" }).map((x) => x.path)).toEqual([":common", ":fabric", ":neoforge"]);
+    expect(parseSettingsIncludes(`pluginManagement { includeBuild("build-logic") }`)).toEqual([]);
+  });
+  it("detects an Architectury build per subproject", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { readProjectInfo } = await import("../src/project/info.js");
+    const root = tmpDir("ffn-multi-");
+    const w = (rel: string, text: string) => {
+      mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      writeFileSync(path.join(root, rel), text);
+    };
+    w("settings.gradle", `pluginManagement { repositories { maven { url "https://maven.fabricmc.net/" } } }\ninclude("common")\nfor (p in enabled_platforms.split(',')) include(p)`);
+    w("gradle.properties", "minecraft_version=1.21.1\nenabled_platforms=fabric,neoforge\nmod_id=demo\nneoforge_version=21.1.80\n");
+    w("build.gradle", `plugins { id "dev.architectury.loom" version "1.7-SNAPSHOT" apply false\n id "architectury-plugin" version "3.4-SNAPSHOT" }`);
+    w("common/build.gradle", `architectury { common(rootProject.enabled_platforms.split(',')) }`);
+    w("fabric/build.gradle", `plugins { id "com.github.johnrengelman.shadow" }\narchitectury { platformSetupLoomIde()\n fabric() }`);
+    w("neoforge/build.gradle", `architectury { platformSetupLoomIde()\n neoForge() }`);
+    w("common/src/main/resources/demo.mixins.json", "{}");
+    w("fabric/src/main/resources/demo-fabric.mixins.json", "{}");
+    w("neoforge/src/main/resources/demo-neoforge.mixins.json", "{}");
+    w("gradlew", "");
+    const r = await readProjectInfo(root);
+    expect(r.subprojects!.map((x) => `${x.path}=${x.platform}`)).toEqual([":common=common", ":fabric=fabric", ":neoforge=neoforge"]);
+    expect(r.classpathProject).toBe(":fabric");
+    expect(r.mixinConfigs.length).toBe(3);
+    const n = await readProjectInfo(path.join(root, "neoforge"));
+    expect([n.loader, n.mcVersion, n.gradlePath, n.rootDir]).toEqual(["neoforge", "1.21.1", ":neoforge", root]);
+    expect(n.mixinConfigs.map((f) => path.basename(f))).toEqual(["demo-neoforge.mixins.json"]);
+    const c = await readProjectInfo(path.join(root, "common"));
+    expect([c.platform, c.mcVersion, c.gradlePath]).toEqual(["common", "1.21.1", ":common"]);
+  });
+  it("caps the JDK at what the project's Gradle can run on", async () => {
+    const { gradleMaxJvm } = await import("../src/tools/gradle.js");
+    const { pickJdk } = await import("../src/jdk/discover.js");
+    expect(gradleMaxJvm("8.10")).toBe(23);
+    expect(gradleMaxJvm("8.14.3")).toBe(24);
+    expect(gradleMaxJvm("9.2.1")).toBe(25);
+    expect(gradleMaxJvm("7.6")).toBe(19);
+    const jdks = [17, 25].map((major) => ({ home: `/j${major}`, major, version: String(major), isJdk: true, source: "t" }));
+    expect(pickJdk([...jdks, { home: "/j21", major: 21, version: "21", isJdk: true, source: "t" }], 18, "x", 23).jdk!.major).toBe(21);
+    expect(pickJdk(jdks, 18, "x", 23).jdk!.major).toBe(25); // nothing in range: still the next newer one
+  });
+});
