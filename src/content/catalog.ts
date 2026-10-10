@@ -21,6 +21,8 @@ const StrList = z.union([Str, z.array(Str)]).transform((v) => (Array.isArray(v) 
 export const OpSchema = z
   .object({
     id: Str.optional(),
+    /** Splice in the ops of another kind of the same catalog (e.g. block_entity includes block_assets). */
+    include: Str.optional(),
     if: Str.optional(),
     unless: Str.optional(),
     /** Symbol specs that must exist for this op (verified, reported as mismatches). */

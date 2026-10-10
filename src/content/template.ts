@@ -5,6 +5,7 @@
  *   {{#if x}}..{{else}}..{{/if}}  {{#unless x}}..{{/unless}}
  *   {{#eq x "lit"}}..{{else}}..{{/eq}}   {{#ne x "lit"}}..{{/ne}}
  *   {{#each list}}{{this.name}}{{@index}}{{#unless @last}}, {{/unless}}{{/each}}
+ *   {{> a.b}}                     render the string value a.b as a template (nested templates from tables)
  *   {{! comment }}
  */
 export class TemplateError extends Error {}
@@ -13,6 +14,7 @@ type Node =
   | { t: "text"; v: string }
   | { t: "var"; path: string }
   | { t: "type"; name: string }
+  | { t: "partial"; path: string }
   | { t: "block"; kind: string; arg: string; lit?: string; body: Node[]; alt: Node[] };
 
 export interface RenderContext {
@@ -38,6 +40,10 @@ function parse(src: string): Node[] {
     last = re.lastIndex;
     const tag = m[1]!.trim();
     if (tag.startsWith("!")) continue;
+    if (tag.startsWith(">")) {
+      push({ t: "partial", path: tag.slice(1).trim() });
+      continue;
+    }
     if (tag.startsWith("#")) {
       const mm = /^#(\w+)\s+(\S+)(?:\s+"([^"]*)")?$/.exec(tag);
       if (!mm) throw new TemplateError(`Bad block tag {{${tag}}}`);
@@ -93,6 +99,11 @@ function run(nodes: Node[], scopes: unknown[], ctx: RenderContext, out: string[]
   for (const n of nodes) {
     if (n.t === "text") out.push(n.v);
     else if (n.t === "type") out.push(ctx.type(n.name));
+    else if (n.t === "partial") {
+      const v = lookup(scopes, n.path);
+      if (typeof v !== "string") throw new TemplateError(`Partial "${n.path}" is not a template string`);
+      run(parse(v), scopes, ctx, out);
+    }
     else if (n.t === "var") {
       const v = lookup(scopes, n.path);
       if (v === undefined || v === null) throw new TemplateError(`Template value "${n.path}" is not defined`);

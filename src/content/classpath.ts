@@ -109,7 +109,7 @@ export class ClasspathSymbols {
       const info = r.info;
       const pools = kind === "method" ? [info.methods] : kind === "field" ? [info.fields] : [info.methods, info.fields];
       for (const list of pools) {
-        for (const m of list) if (m.name === name && (!descPrefix || m.desc.startsWith(descPrefix))) return true;
+        for (const m of list) if (m.name === name && !(m.access & 0x0002) && (!descPrefix || m.desc.startsWith(descPrefix))) return true;
       }
       if (info.superName) queue.push(info.superName);
       queue.push(...info.interfaces);

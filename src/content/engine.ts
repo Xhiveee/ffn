@@ -254,6 +254,8 @@ export async function planContent(services: Services, req: GenerateRequest, onPr
     return r.ok;
   };
   const resolveType = (name: string): string => {
+    if (name === "Main") return main!.fqcn;
+    if (name.startsWith("~")) return `${pkg}${name.slice(1)}`; // the mod's own classes, relative to its package
     if (name.includes(".")) {
       verify(name);
       return name;
@@ -380,7 +382,15 @@ export async function planContent(services: Services, req: GenerateRequest, onPr
     modBusImports = mb.imports;
   }
 
-  for (const op of def.ops) {
+  const expand = (ops: ContentOp[], depth = 0): ContentOp[] =>
+    ops.flatMap((o) => {
+      if (!o.include) return [o];
+      const inc = catalog.kinds[o.include];
+      if (!inc || depth > 5) throw new GenerateError(`include: unknown kind "${o.include}"`);
+      if (o.if && !evalCondition(o.if, ctx)) return [];
+      return expand(inc.ops, depth + 1);
+    });
+  for (const op of expand(def.ops)) {
     const label = op.id ?? op.write ?? op.insert ?? op.json ?? op.hook ?? "op";
     try {
       if (op.if && !evalCondition(op.if, ctx)) continue;
