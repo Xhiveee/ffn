@@ -6,7 +6,6 @@ import { diagnose, classMajorToJava } from "../src/diagnostics/parse.js";
 import { ClassReader, javaToDesc, methodToJava, parseMethodDesc } from "../src/index/classfile.js";
 import { MappingTable, parseProguard, parseTinyV2, parseTsrg2, writeTinyV2 } from "../src/index/mappings.js";
 import { indexJar, McIndex, type IndexMeta } from "../src/index/store.js";
-import { planMixin } from "../src/mixin/generate.js";
 import { matchHints, loadHints } from "../src/mixin/hints.js";
 import { parseJava } from "../src/mixin/javaparse.js";
 import { MixinValidator, parseSelector, validateProject, type ValidateContext } from "../src/mixin/validate.js";
@@ -213,24 +212,7 @@ describe("mixin parsing & validation", () => {
   });
 });
 
-describe("mixin generation", () => {
-  it("generates validated handlers from real descriptors and registers them", async () => {
-    const dir = fakeProject({});
-    const ctx = await ctxFor(dir);
-    const plan = await planMixin(ctx, { targetClass: "FakeServer", member: "tickServer", injection: "wrap_operation", at: "INVOKE:tickChildren" });
-    expect(plan.content).toContain('@WrapOperation(method = "tickServer(Ljava/util/function/BooleanSupplier;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/FakeServer;tickChildren(Ljava/util/function/BooleanSupplier;)V"))');
-    expect(plan.content).toContain("Operation<Void> original");
-    expect(plan.issues.filter((i) => i.severity === "error")).toEqual([]);
-    expect(JSON.parse(plan.configContent).mixins).toContain("FakeServerMixin");
-    const inj = await planMixin(ctx, { targetClass: "FakeServer", member: "initServer", injection: "inject", at: "RETURN", cancellable: true });
-    expect(inj.content).toContain("CallbackInfoReturnable<Boolean> cir");
-    const acc = await planMixin(ctx, { targetClass: "FakeServer", member: "tickCount", injection: "accessor" });
-    expect(acc.content).toContain("int m$getTickCount();"); // getTickCount exists in the target → prefixed
-    expect(acc.issues.filter((i) => i.severity === "error")).toEqual([]);
-    await expect(planMixin({ ...ctx, mixinExtrasAvailable: false }, { targetClass: "FakeServer", member: "initServer", injection: "modify_return_value" })).rejects.toThrow(/MixinExtras/);
-    await expect(planMixin(ctx, { targetClass: "FakeServer", member: "loadLevel", injection: "redirect", at: "INVOKE:nothere" })).rejects.toThrow(/does not call/);
-  });
-
+describe("mixin hints", () => {
   it("matches event hints", async () => {
     const hints = await loadHints(fixtureServices().config);
     const h = matchHints(hints, "net/minecraft/server/MinecraftServer", "tickServer", "fabric");

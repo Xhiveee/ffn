@@ -9,7 +9,7 @@ import path from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
 import type { FfnConfig } from "../config.js";
-import { ZipDir } from "../content/zip.js";
+import { ZipDir } from "../util/zip.js";
 import { compareMcVersions, parseMcVersion } from "../util/mcversion.js";
 
 const FileRule = z.object({

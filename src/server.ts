@@ -7,7 +7,6 @@ import { registerMixinTools } from "./tools/mixin.js";
 import { registerCrashTools } from "./tools/crash.js";
 import { registerGetProfile } from "./tools/getProfile.js";
 import { registerListVersions } from "./tools/listVersions.js";
-import { registerGenerateTools } from "./tools/generate.js";
 import { registerDocsTools } from "./tools/docs.js";
 import { registerCheckProfiles } from "./tools/checkProfiles.js";
 
@@ -35,7 +34,6 @@ export function createServer(services: Services): McpServer {
   registerSourceTools(server, services);
   registerMixinTools(server, services);
   registerCrashTools(server, services);
-  registerGenerateTools(server, services);
   registerDocsTools(server, services);
   registerCheckProfiles(server, services);
   return server;

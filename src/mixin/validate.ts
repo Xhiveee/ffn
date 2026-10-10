@@ -975,7 +975,7 @@ export async function validateProject(ctx: ValidateContext, opts: { mixinClass?:
         const relToRoot = project.javaSourceRoots.map((r) => path.relative(r, f)).find((x) => !x.startsWith(".."));
         if (!relToRoot?.replace(/\\/g, "/").startsWith(pkgPath + "/")) continue;
         const text = await readFile(f, "utf8");
-        if (/@Mixin\s*\(/.test(text)) issues.push({ severity: "warning", file: path.relative(project.dir, f), message: `Has @Mixin but is not listed in ${base}; it will not be applied.`, suggestion: "Add it to mixins/client/server in the config (mixin_generate does this automatically)." });
+        if (/@Mixin\s*\(/.test(text)) issues.push({ severity: "warning", file: path.relative(project.dir, f), message: `Has @Mixin but is not listed in ${base}; it will not be applied.`, suggestion: "Add it to mixins/client/server in the config." });
       }
     }
   }

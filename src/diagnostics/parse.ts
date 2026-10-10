@@ -340,7 +340,7 @@ function modFromMixinText(line: string): string | undefined {
 
 function mixinSuggestion(kind: string, msg: string): string {
   if (/cannot overwrite method .* @Overwrite is required/i.test(msg)) return "A mixin method (often an @Accessor/@Invoker or handler) has the same name+descriptor as a method in the target. Rename it (e.g. prefix with <modid>$); mixin_validate detects this.";
-  if (/Invalid descriptor|expected .* but found|signature/i.test(msg)) return "The handler signature does not match the target. Regenerate it with mixin_generate or compare with mixin_targets.";
+  if (/Invalid descriptor|expected .* but found|signature/i.test(msg)) return "The handler signature does not match the target. Compare it with the real descriptor from mixin_targets / get_class.";
   if (/could not find any targets|No refMap|not located/i.test(msg)) return "Target not found: the method/field was renamed or its descriptor changed in this version. Check with mixin_targets.";
   if (kind === "MixinTargetAlreadyLoadedException") return "The target class was loaded before Mixin could transform it (often by another mod or a static reference in a mixin). Avoid touching the target class from mod init code.";
   return "Run mixin_validate on the project to locate the bad annotation.";

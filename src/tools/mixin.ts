@@ -4,7 +4,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { ACC, methodToJava } from "../index/classfile.js";
-import { INJECTION_KINDS, planMixin, writePlan } from "../mixin/generate.js";
 import { loadHints, matchHints, MIXIN_POLICY } from "../mixin/hints.js";
 import { validateProject, type MixinIssue, type ValidateContext } from "../mixin/validate.js";
 import { readProjectInfo } from "../project/info.js";
@@ -55,31 +54,8 @@ export const mixinTargetsInput = {
   includeSynthetic: z.boolean().optional().describe("Include synthetic methods such as lambda bodies (lambda$name$0)."),
 };
 
-export const mixinGenerateInput = {
-  projectDir: z.string(),
-  targetClass: z.string().describe("Minecraft class to mix into (any accepted name form)."),
-  method: z.string().describe("Target method name or selector name(desc); for accessor: the field name; for invoker: the method."),
-  injection: z.enum(INJECTION_KINDS).describe(
-    "inject | redirect | modify_arg | modify_variable (method arguments) | modify_constant (needs constant) | modify_return_value* | modify_expression_value* | wrap_operation* | wrap_with_condition* | wrap_method* | accessor | invoker | overwrite (last resort: replaces the whole method, conflicts with other mods)  (*MixinExtras)",
-  ),
-  at: z.string().optional().describe('HEAD (default for inject) | RETURN | TAIL | INVOKE:<call> | FIELD:<field> | NEW:<class> (inject, redirect, modify_expression_value, wrap_operation). <call> may be a bare name ("INVOKE:tickChildren") or full "Lowner;name(desc)ret"; FFN resolves it from the method bytecode.'),
-  constant: z.string().optional().describe('modify_constant: the constant, e.g. "5", "0.5F", "2.0", "10L", "\"text\"", or typed "int:5", "float:0.5", "string:text", "class:net.minecraft.world.item.Item". FFN checks it exists in the target bytecode.'),
-  side: z.enum(["common", "client", "server"]).optional().describe('mixins.json list; default: "client" for client-only classes, else "common" (mixins).'),
-  name: z.string().optional().describe("Mixin class name (default <Target>Mixin / <Target>Accessor). An existing mixin with that name gets the new handler appended."),
-  handlerName: z.string().optional(),
-  cancellable: z.boolean().optional().describe("inject: allow ci.cancel()/cir.setReturnValue()."),
-  argIndex: z.number().int().min(0).optional().describe("modify_arg: call argument index; modify_variable: target method parameter index."),
-  ordinal: z.number().int().min(0).optional().describe("Which occurrence of the injection point (default all)."),
-  setter: z.boolean().optional().describe("accessor: also generate a setter (adds @Mutable for final fields)."),
-  configFile: z.string().optional().describe("Which *.mixins.json to register in (default <modid>.mixins.json)."),
-  dryRun: z.boolean().optional().describe("Return the code without writing."),
-  force: z.boolean().optional().describe("Write even if validation reports errors."),
-  source: sourceOpt,
-};
-
 type V = z.infer<z.ZodObject<typeof mixinValidateInput>>;
 type T = z.infer<z.ZodObject<typeof mixinTargetsInput>>;
-type G = z.infer<z.ZodObject<typeof mixinGenerateInput>>;
 
 export async function mixinValidate(services: Services, a: V) {
   const { ctx, notes } = await mixinContext(services, a.projectDir, a.source);
@@ -174,39 +150,6 @@ export async function mixinTargets(services: Services, a: T) {
   });
 }
 
-export async function mixinGenerate(services: Services, a: G) {
-  const { ctx, notes } = await mixinContext(services, a.projectDir, a.source);
-  const plan = await planMixin(ctx, {
-    targetClass: a.targetClass, member: a.method, injection: a.injection, at: a.at, side: a.side, mixinName: a.name, handlerName: a.handlerName,
-    cancellable: a.cancellable, argIndex: a.argIndex, ordinal: a.ordinal, setter: a.setter, configFile: a.configFile, constant: a.constant,
-  });
-  const errors = plan.issues.filter((i) => i.severity === "error");
-  const write = !a.dryRun && (errors.length === 0 || a.force);
-  if (write) await writePlan(plan);
-  const target = ctx.index.resolve(a.targetClass)[0]!;
-  const hints = matchHints(await loadHints(services.config), target, a.method.replace(/\(.*/, ""), ctx.project.loader);
-  const data = {
-    written: write,
-    file: plan.file,
-    mixin: plan.fqcn,
-    appendedToExisting: plan.appended,
-    registeredIn: { config: plan.config, list: plan.section, changed: plan.configChanged },
-    handler: plan.handler,
-    annotation: plan.annotation,
-    code: plan.content,
-    validation: { ...summarize(plan.issues), issues: plan.issues.filter((i) => i.severity !== "info") },
-    hints,
-    policy: hints.length ? MIXIN_POLICY : undefined,
-    notes,
-  };
-  const head = write
-    ? `${plan.appended ? "Added handler to" : "Created"} ${plan.fqcn} (${plan.annotation})${plan.configChanged ? ` and registered it in ${path.basename(plan.config)} "${plan.section}"` : ""}.`
-    : a.dryRun
-      ? `Dry run: ${plan.fqcn} (${plan.annotation}); nothing written.`
-      : `Not written: validation found ${errors.length} error(s) (pass force=true to write anyway).`;
-  return { ...ok(`${head}${hints.length ? ` Consider instead: ${hints.map((h) => `${h.use} → ${(h as Record<string, unknown>)[ctx.project.loader] ?? "loader event"}`).join("; ")}.` : ""}`, data), isError: !write && !a.dryRun };
-}
-
 export function registerMixinTools(server: McpServer, services: Services): void {
   server.registerTool(
     "mixin_targets",
@@ -229,16 +172,5 @@ export function registerMixinTools(server: McpServer, services: Services): void 
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     (a) => guard(() => mixinValidate(services, a)),
-  );
-  server.registerTool(
-    "mixin_generate",
-    {
-      title: "Generate mixin",
-      description:
-        "Generate a mixin handler from the target's real descriptor (@Inject, @Redirect, @ModifyArg, @ModifyVariable, @Accessor, @Invoker, and MixinExtras @ModifyReturnValue/@ModifyExpressionValue/@WrapOperation/@WrapWithCondition/@WrapMethod where available), validate it, then write it (new class or appended to an existing mixin) and register it in the mixins.json. Suggests loader events when they cover the use case.",
-      inputSchema: mixinGenerateInput,
-      annotations: { readOnlyHint: false, openWorldHint: true },
-    },
-    (a) => guard(() => mixinGenerate(services, a)),
   );
 }
