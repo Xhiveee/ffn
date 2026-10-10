@@ -70,9 +70,6 @@ export function targetRelease(v: string): string | null {
   return p ? p.release.join(".") : null;
 }
 
-export function mcGte(a: string, b: string): boolean {
-  return compareMcVersions(a, b) >= 0;
-}
 
 /** Generic dotted-numeric comparison for loader/plugin versions ("0.92.12", "21.1.256", "2.0.148"). */
 export function compareLooseVersions(a: string, b: string): number {

@@ -1,4 +1,3 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -8,7 +7,8 @@ import { runProcess, type RunResult } from "../exec/run.js";
 import { discoverJdks, pickJdk, type JdkInfo } from "../jdk/discover.js";
 import { readProjectInfo, type ProjectInfo } from "../project/info.js";
 import { lookupProfile, type Services } from "../services.js";
-import { clip, fail, guard, ok } from "./result.js";
+import { clip, fail, ok } from "./result.js";
+import { gradleBuildInput } from "./schemas.js";
 
 const KEEP = [
   /\.(java|kt):\d+: (error|warning):/,
@@ -163,17 +163,7 @@ function report(run: GradleRun) {
   };
 }
 
-const projectDir = z.string().describe("Path to the mod project (root with gradlew).");
-const javaHome = z.string().optional().describe("Force a JDK home. Default: auto-pick an installed JDK matching the profile (Java target and the Gradle plugin's minimum).");
 
-export const gradleBuildInput = {
-  projectDir,
-  tasks: z.array(z.string()).optional().describe('Gradle tasks, default ["build"].'),
-  args: z.array(z.string()).optional().describe("Extra Gradle arguments, e.g. --offline, --refresh-dependencies."),
-  javaHome,
-  timeoutSec: z.number().int().positive().max(7200).optional().describe("Default 1200."),
-  daemon: z.boolean().optional().describe("Use the Gradle daemon (default true; faster repeated builds)."),
-};
 
 type BuildArgs = z.infer<z.ZodObject<typeof gradleBuildInput>>;
 
@@ -191,18 +181,4 @@ export async function gradleBuild(services: Services, a: BuildArgs) {
   const data = report(run);
   const okRun = run.result.exitCode === 0 && !run.result.timedOut;
   return { ...ok(`Gradle ${(a.tasks ?? ["build"]).join(" ")} ${data.status} in ${data.durationSec}s with JDK ${run.jdk.major}. ${run.diagnosis.summary}`, data), isError: !okRun };
-}
-
-export function registerGradleTools(server: McpServer, services: Services): void {
-  server.registerTool(
-    "gradle_build",
-    {
-      title: "Gradle build",
-      description:
-        "Run Gradle tasks (default: build) in a mod project with an automatically chosen installed JDK (the profile's Java target and the Gradle plugin's minimum). Output is streamed to a log file; the result contains parsed findings: compiler errors with file:line, Mixin AP warnings, dependency-resolution failures, Gradle/JVM mismatches.",
-      inputSchema: gradleBuildInput,
-      annotations: { readOnlyHint: false, openWorldHint: true },
-    },
-    (a) => guard(() => gradleBuild(services, a)),
-  );
 }

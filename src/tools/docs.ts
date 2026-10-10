@@ -1,27 +1,12 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { chooseSet, DocsStore, loadDocSources, rank, snippet, type DocPage, type DocSource } from "../docs/search.js";
 import { readProjectInfo } from "../project/info.js";
-import { LoaderSchema, type Loader } from "../profiles/schema.js";
+import { type Loader } from "../profiles/schema.js";
 import type { Services } from "../services.js";
 import { compareMcVersions, parseMcVersion } from "../util/mcversion.js";
-import { fail, guard, okText } from "./result.js";
+import { fail, okText } from "./result.js";
+import { docsSearchInput } from "./schemas.js";
 
-export const docsSearchInput = {
-  query: z.string().min(2).describe("What to look for, e.g. 'register a block entity renderer', 'data components', 'CustomPacketPayload'"),
-  loader: LoaderSchema.optional().describe("fabric | forge | neoforge (default: from projectDir, else all)"),
-  mcVersion: z.string().optional().describe("Minecraft version the answer must fit (default: from projectDir, else latest docs)"),
-  projectDir: z.string().optional().describe("Take loader and Minecraft version from this mod project"),
-  kinds: z
-    .array(z.enum(["docs", "primer", "changelog"]))
-    .optional()
-    .describe("docs (loader documentation), primer (NeoForged version primers: vanilla + loader changes per version, useful for porting), changelog (Fabric per-version announcements). Default: all"),
-  topic: z.string().optional().describe("Only pages about this topic, e.g. 'mixin' (Mixin wiki, MixinExtras wiki, Fabric's mixin docs/wiki pages). Topics come from profiles/docs/*.yaml"),
-  sources: z.array(z.string()).optional().describe("Only these source ids, e.g. ['mixin-wiki','mixinextras-wiki'] (see profiles/docs/sources.yaml)"),
-  limit: z.number().int().min(1).max(25).optional().describe("Max results (default 5)"),
-  includeCode: z.boolean().optional().describe("Include the first code block of each matching section (default true)"),
-  verifyUrls: z.boolean().optional().describe("Check that every returned page URL responds (default true)"),
-};
 type Args = { [K in keyof typeof docsSearchInput]?: z.infer<(typeof docsSearchInput)[K]> } & { query: string };
 
 let shared: DocsStore | undefined;
@@ -169,18 +154,4 @@ export async function docsSearch(services: Services, a: Args, injected?: DocsSto
     ...lines,
   ].join("\n");
   return okText(summary);
-}
-
-export function registerDocsTools(server: McpServer, services: Services): void {
-  server.registerTool(
-    "docs_search",
-    {
-      title: "Search docs",
-      description:
-        "Search the official Fabric, Forge and NeoForge documentation, the NeoForged version primers (what changed in each Minecraft version, for porting), Fabric's per-version announcements, and Mixin docs (SpongePowered Mixin wiki, MixinExtras wiki, Fabric mixin pages; not version-specific). Pass topic='mixin' to search only Mixin docs. Version-aware: picks the doc set matching the project's/requested Minecraft version (or says which closest set it used). Pages are fetched from the official repositories, cached, and every returned page URL is checked to exist. Returns snippets, code blocks and source URLs.",
-      inputSchema: docsSearchInput,
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    (a) => guard(() => docsSearch(services, a as Args)),
-  );
 }

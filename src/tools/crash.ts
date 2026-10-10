@@ -1,20 +1,12 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { diagnose } from "../diagnostics/parse.js";
 import type { Services } from "../services.js";
-import { clip, fail, guard, ok } from "./result.js";
+import { clip, fail, ok } from "./result.js";
+import { analyzeCrashInput } from "./schemas.js";
 
-export const analyzeCrashInput = {
-  log: z.string().optional().describe("Pasted crash report, latest.log/debug.log excerpt or Gradle output."),
-  path: z.string().optional().describe("Path to a crash report or log file."),
-  projectDir: z.string().optional().describe("Use the newest crash report (else logs/latest.log) in the project's run directory."),
-  runDir: z.string().optional().describe('Run directory relative to projectDir (default "run").'),
-  limit: z.number().int().min(1).max(200).optional().describe("Findings per page (default 20, errors first)."),
-  offset: z.number().int().min(0).optional().describe("Skip this many findings (paging)."),
-};
 type A = z.infer<z.ZodObject<typeof analyzeCrashInput>>;
 
 async function newest(dir: string, filter: (f: string) => boolean): Promise<string | undefined> {
@@ -60,18 +52,4 @@ export async function analyzeCrash(_services: Services, a: A) {
       ...(d.culprit && d.culprit.confidence !== "high" ? ["The culprit is a heuristic guess; confirm by removing that mod."] : []),
     ],
   });
-}
-
-export function registerCrashTools(server: McpServer, services: Services): void {
-  server.registerTool(
-    "analyze_crash",
-    {
-      title: "Analyze crash",
-      description:
-        "Parse a crash report, latest.log or Gradle output: root exception, likely culprit mod, Mixin failures (InvalidInjectionException, missing targets, @Shadow not found, overwrite conflicts, unsupported compatibilityLevel), missing/duplicate mod dependencies, wrong Java (class file versions), class-not-found/linkage errors, with suggested fixes.",
-      inputSchema: analyzeCrashInput,
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    },
-    (a) => guard(() => analyzeCrash(services, a)),
-  );
 }

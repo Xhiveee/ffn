@@ -20,7 +20,8 @@ import { emptySet, MappingTable, parseProguard, parseTinyV2, parseTsrg2, writeTi
 import { indexJar, McIndex, vineflowerDecompile, vineflowerDecompileMany, type IndexMeta } from "./store.js";
 import { toolJar, toolJava } from "./tooljars.js";
 
-export const INDEX_NAMESPACES = ["mojmap", "parchment", "yarn", "intermediary", "obf"] as const;
+import { INDEX_NAMESPACES } from "../tools/schemas.js";
+export { INDEX_NAMESPACES };
 export type IndexNamespace = (typeof INDEX_NAMESPACES)[number];
 
 export interface IndexSpec {

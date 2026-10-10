@@ -3,7 +3,6 @@
  * plugin metadata) and with Minecraft releases newer than the profiles were tested against. Reports what is
  * outdated or unverified and suggests user-profile patches — nothing is applied.
  */
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -12,7 +11,7 @@ import { z } from "zod";
 import { LoaderSchema, type Loader } from "../profiles/schema.js";
 import { lookupProfile, type Services } from "../services.js";
 import { compareMcVersions, isReleaseVersion } from "../util/mcversion.js";
-import { guard, okText } from "./result.js";
+import { okText } from "./result.js";
 
 const RefSchema = z.object({
   loader: LoaderSchema,
@@ -206,19 +205,5 @@ export async function checkProfiles(services: Services, a: { loaders?: Loader[];
       ...shown.map((f) => `${f.status.toUpperCase()} ${f.loader}${f.mcVersion ? ` ${f.mcVersion}` : ""} ${f.item}: ${f.message}`),
       ...(yaml.length ? ["Suggested profile patches (NOT applied):", ...yaml] : ["No patches needed."]),
     ].join("\n"),
-  );
-}
-
-export function registerCheckProfiles(server: McpServer, services: Services): void {
-  server.registerTool(
-    "check_profiles",
-    {
-      title: "Check profiles",
-      description:
-        "Compare FFN's version profiles with upstream references (official Fabric example mod, NeoForge/Forge MDKs, Gradle, plugin maven metadata — declared in profiles/checks/upstream.yaml) and with Minecraft releases newer than the profiles' testedUpTo. Reports what is outdated or unverified and returns suggested user-profile YAML patches. Never modifies profiles.",
-      inputSchema: { loaders: z.array(LoaderSchema).optional().describe("Loaders to check (default all)"), verbose: z.boolean().optional().describe("Also list items that are up to date") },
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    (a) => guard(() => checkProfiles(services, a)),
   );
 }

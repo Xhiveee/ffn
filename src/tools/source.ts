@@ -1,81 +1,23 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { accessString, ACC, descToJava, methodToJava } from "../index/classfile.js";
 import { INDEX_NAMESPACES, type IndexSpec } from "../index/service.js";
 import type { McIndex } from "../index/store.js";
-import { LoaderSchema } from "../profiles/schema.js";
 import type { Services } from "../services.js";
-import { clip, fail, guard, ok, okText, page } from "./result.js";
+import { clip, fail, ok, okText, page } from "./result.js";
 import { extractMethods, paramsMatch } from "../index/javasrc.js";
 import { allInterfaces, allSubtypes, directSubtypes, findUsages, overrides, parseTarget, superChain, type Usage, type UsageTarget } from "../index/xref.js";
+import { searchInput, getClassInput, translateInput } from "./schemas.js";
 
-export const indexSpecShape = {
-  mcVersion: z.string().optional().describe("Minecraft version (optional when projectDir is given)."),
-  mappings: z.enum(INDEX_NAMESPACES).optional().describe("Names to use: mojmap (default) | parchment (= mojmap names) | yarn | intermediary | obf. Ignored for unobfuscated versions (26.1+), which only have Mojang names."),
-  loader: LoaderSchema.optional(),
-  projectDir: z.string().optional().describe("Use the Minecraft jar this project compiles against (includes Forge/NeoForge patches, project names)."),
-  source: z.enum(["auto", "vanilla", "project", "loader"]).optional().describe("auto (default): project jar if projectDir, else vanilla. loader: Forge/NeoForge-patched jar via a cached official MDK (needs loader; first run takes minutes)."),
-};
 
 type SpecArgs = { mcVersion?: string; mappings?: (typeof INDEX_NAMESPACES)[number]; loader?: string; projectDir?: string; source?: "auto" | "vanilla" | "project" | "loader" };
 export const toSpec = (a: SpecArgs): IndexSpec => ({ mcVersion: a.mcVersion, mappings: a.mappings, loader: a.loader, projectDir: a.projectDir, source: a.source });
 
 const dotted = (n: string) => n.replace(/\//g, ".");
 
-export function describeIndex(index: McIndex) {
-  const m = index.meta;
-  return { mcVersion: m.mcVersion, names: m.namespace, kind: m.kind, loader: m.loader, classes: m.classCount, jar: m.jar, sourcesJar: m.sourcesJar };
-}
 
-export function classMembers(index: McIndex, name: string, opts: { filter?: string; inherited?: boolean; includeSynthetic?: boolean } = {}) {
-  const c = index.get(name)!;
-  const f = opts.filter?.toLowerCase();
-  const keep = (n: string, a: number) => (!f || n.toLowerCase().includes(f)) && (opts.includeSynthetic || !(a & ACC.SYNTHETIC));
-  const owners = opts.inherited ? index.hierarchy(name) : [c];
-  return {
-    fields: owners.flatMap((o) =>
-      o.f.filter(([n, , a]) => keep(n, a)).map(([n, d, a]) => ({
-        name: n, descriptor: d, type: descToJava(d), access: accessString(a, false), ...(o.n !== name ? { declaredIn: dotted(o.n) } : {}),
-      })),
-    ),
-    methods: owners.flatMap((o) =>
-      o.m.filter(([n, , a]) => keep(n, a) && (o.n === name || n !== "<init>") && n !== "<clinit>").map(([n, d, a]) => ({
-        name: n, descriptor: d, signature: methodToJava(n, d, o.n), access: accessString(a, true), mixinSelector: `${n}${d}`,
-        ...(o.n !== name ? { declaredIn: dotted(o.n) } : {}),
-      })),
-    ),
-  };
-}
 
-export const searchInput = {
-  ...indexSpecShape,
-  query: z.string().min(1).describe("Name fragment or /regex/. text: regex over source lines. usages: Class, Class#method[(desc)] or Class#field."),
-  kind: z.enum(["any", "class", "method", "field", "text", "usages"]).optional().describe("any (default): names. text: grep sources (sources jar, else decompiled lazily). usages: callers/readers/users from bytecode."),
-  limit: z.number().int().min(1).max(200).optional().describe("Results per page (default 30)."),
-  offset: z.number().int().min(0).optional().describe("Skip this many results (paging)."),
-};
 
-export const getClassInput = {
-  ...indexSpecShape,
-  className: z.string().describe("Class name: net.minecraft.server.MinecraftServer, internal form, inner classes with . or $, or a simple name."),
-  method: z.string().optional().describe('Return only this method\'s source: name ("tick", "<init>" for constructors) or name+descriptor ("hurt(Lnet/minecraft/world/damagesource/DamageSource;F)Z"). All overloads (max 5) without a descriptor.'),
-  detail: z.enum(["outline", "hierarchy", "full"]).optional().describe("outline (default): signatures, no bodies. hierarchy: supertypes, interfaces, subclasses/implementors (+ overrides with method). full: paged source."),
-  members: z.array(z.enum(["fields", "methods", "inner"])).optional().describe("Outline sections to include (default all)."),
-  memberFilter: z.string().optional().describe("Outline: only members whose name contains this text."),
-  inherited: z.boolean().optional().describe("Outline: include members of supertypes found in the index."),
-  descriptors: z.boolean().optional().describe("Outline: show methods as name(JVM descriptor) = mixin selector (default true); false = Java signatures with simple type names (shorter)."),
-  offset: z.number().int().min(0).optional().describe("Paging: outline = first member, full = first source line (0-based)."),
-  limit: z.number().int().min(1).max(2000).optional().describe("Paging: outline members (default 200), full source lines (default 300)."),
-};
 
-export const translateInput = {
-  mcVersion: z.string(),
-  name: z.string().describe("Class (net.minecraft.server.MinecraftServer / class_1234 / C_1234_), member (Owner#name, name(desc)) or bare member name (m_1234_, method_5678, field_1234, loadLevel)."),
-  from: z.enum(["mojmap", "parchment", "yarn", "intermediary", "srg", "obf"]),
-  to: z.enum(["mojmap", "parchment", "yarn", "intermediary", "srg", "obf"]).optional().describe("Highlight this namespace (all available are returned)."),
-  kind: z.enum(["class", "field", "method"]).optional(),
-  limit: z.number().int().min(1).max(100).optional(),
-};
 
 type Search = z.infer<z.ZodObject<typeof searchInput>>;
 type GetClass = z.infer<z.ZodObject<typeof getClassInput>>;
@@ -344,39 +286,4 @@ export async function translateMapping(services: Services, a: Translate) {
   }));
   const extra = a.from === "parchment" || a.to === "parchment" ? ["Parchment uses Mojang names for classes, fields and methods (it adds parameter names/javadoc)."] : [];
   return ok(`${res.length} match(es) for ${a.name} (${a.from}) in ${a.mcVersion}. Namespaces: ${table.namespaces.join(", ")}.`, { mcVersion: a.mcVersion, matches: fmt, notes: [...notes, ...extra] });
-}
-
-export function registerSourceTools(server: McpServer, services: Services): void {
-  server.registerTool(
-    "search_mc_source",
-    {
-      title: "Search Minecraft classes/members",
-      description:
-        "Search the real Minecraft classes, methods (name + JVM descriptor) and fields of an exact version in the chosen names, or grep the sources (kind=text). Compact one-line results, 30 per page (offset/limit). The index is built on first use from official jars + mappings (or the project's own Minecraft jar) and cached.",
-      inputSchema: searchInput,
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    (a) => guard(() => searchMcSource(services, a)),
-  );
-  server.registerTool(
-    "get_class",
-    {
-      title: "Get Minecraft class",
-      description:
-        "A Minecraft class for an exact version and mappings. Default: compact outline (header, fields, methods as name(descriptor) = mixin selector, inner classes; no bodies; paged). method=<name>[descriptor] returns just that method's source (all overloads, capped). detail=full returns the whole (decompiled) source paged by lines — expensive, use only when needed. Token-saving workflow: outline first, then method.",
-      inputSchema: getClassInput,
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    (a) => guard(() => getClass(services, a)),
-  );
-  server.registerTool(
-    "translate_mapping",
-    {
-      title: "Translate mapping names",
-      description: "Translate class/method/field names between obfuscated, Mojang (mojmap/Parchment), Fabric Intermediary, Yarn and Forge SRG names for a Minecraft version (all namespaces published for it). On unobfuscated versions (26.1+) names are identical everywhere.",
-      inputSchema: translateInput,
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    (a) => guard(() => translateMapping(services, a)),
-  );
 }

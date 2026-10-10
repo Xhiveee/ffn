@@ -1,20 +1,9 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import { lookupProfile, type Services } from "../services.js";
 import { Notes } from "../sources/index.js";
 import { LOADERS, type Loader } from "../profiles/schema.js";
 import { compareMcVersions } from "../util/mcversion.js";
-import { guard, ok, okText } from "./result.js";
+import { ok, okText } from "./result.js";
 
-export const listVersionsInput = {
-  mcVersion: z
-    .string()
-    .optional()
-    .describe("If set, return details for this Minecraft version: loader versions, Java, Gradle plugin per loader."),
-  includeSnapshots: z.boolean().optional().describe("Include snapshots / pre-releases in the list (default false)."),
-  includeUnsupported: z.boolean().optional().describe("Include versions older than FFN's minimum (1.20.1). Default false."),
-  limit: z.number().int().min(1).max(500).optional().describe("Max versions to list (default 60)."),
-};
 
 async function loaderAvailability(services: Services, notes: Notes) {
   const sets = await services.versions.loaderAvailability(notes);
@@ -128,18 +117,4 @@ function compact(loader: Loader, info: unknown): Record<string, unknown> {
     return { available: all.length > 0, recommended: i.recommended ?? null, latest: i.latest ?? null, builds: all.length };
   }
   return { available: all.length > 0, artifact: i.artifact, latestStable: i.latestStable ?? null, latest: i.latest ?? null, builds: all.length };
-}
-
-export function registerListVersions(server: McpServer, services: Services): void {
-  server.registerTool(
-    "list_versions",
-    {
-      title: "List Minecraft / loader versions",
-      description:
-        "Live Minecraft versions from Mojang plus Forge, Fabric and NeoForge availability. With mcVersion: compatible loader versions (Fabric Loader/API/Yarn, Forge recommended/latest, NeoForge stable/beta), required Java and the recommended Gradle plugin per loader. Data comes from official sources at call time (cached), never from a hardcoded list.",
-      inputSchema: listVersionsInput,
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    (args) => guard(() => listVersions(services, args)),
-  );
 }

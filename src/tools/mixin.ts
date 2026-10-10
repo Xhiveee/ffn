@@ -1,18 +1,17 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { ACC, methodToJava } from "../index/classfile.js";
+import { ACC } from "../index/classfile.js";
 import { loadHints, matchHints, MIXIN_POLICY } from "../mixin/hints.js";
 import { validateProject, type MixinIssue, type ValidateContext } from "../mixin/validate.js";
 import { readProjectInfo } from "../project/info.js";
 import type { ResolvedProfile } from "../profiles/schema.js";
 import { lookupProfile, type Services } from "../services.js";
-import { fail, guard, ok, okText, page } from "./result.js";
-import { indexSpecShape, toSpec } from "./source.js";
+import { fail, ok, okText, page } from "./result.js";
+import { toSpec } from "./source.js";
+import { mixinValidateInput, mixinTargetsInput } from "./schemas.js";
 
-const sourceOpt = z.enum(["auto", "vanilla", "project"]).optional().describe("Class data: auto (default) = the Minecraft jar the project compiles against (exact names incl. loader patches; first call resolves it via Gradle), falling back to vanilla Minecraft; vanilla = official jars + mappings only.");
 
 export async function mixinContext(services: Services, projectDir: string, source?: "auto" | "vanilla" | "project"): Promise<{ ctx: ValidateContext; notes: string[] }> {
   const project = await readProjectInfo(projectDir);
@@ -39,23 +38,7 @@ const summarize = (issues: MixinIssue[]) => ({
   infos: issues.filter((i) => i.severity === "info").length,
 });
 
-export const mixinValidateInput = {
-  projectDir: z.string(),
-  mixinClass: z.string().optional().describe("Only validate this mixin (simple or fully-qualified name)."),
-  source: sourceOpt,
-  includeInfo: z.boolean().optional().describe("Include info-level notes (default false)."),
-};
 
-export const mixinTargetsInput = {
-  ...indexSpecShape,
-  targetClass: z.string(),
-  methodFilter: z.string().optional().describe("Only methods whose name contains this (or exact selector name(desc)). Recommended: without it you get a compact selector list only."),
-  injectionPoints: z.boolean().optional().describe("List INVOKE/FIELD/NEW/CONSTANT targets inside the methods (default: when ≤ 3 methods match)."),
-  maxPoints: z.number().int().min(1).max(500).optional().describe("Max entries per injection-point kind per method (default 25)."),
-  includeSynthetic: z.boolean().optional().describe("Include synthetic methods such as lambda bodies (lambda$name$0)."),
-  offset: z.number().int().min(0).optional().describe("Paging over methods."),
-  limit: z.number().int().min(1).max(500).optional().describe("Methods per page (default 100 without injection points, 3 with)."),
-};
 
 type V = z.infer<z.ZodObject<typeof mixinValidateInput>>;
 type T = z.infer<z.ZodObject<typeof mixinTargetsInput>>;
@@ -177,30 +160,5 @@ export async function mixinTargets(services: Services, a: T) {
       ...(pg.more ? [`… ${pg.more}`] : []),
       ...(!withPoints ? ["Pass methodFilter (≤3 matches) or injectionPoints=true for INVOKE/FIELD/NEW/CONSTANT targets."] : []),
     ].join("\n"),
-  );
-}
-
-export function registerMixinTools(server: McpServer, services: Services): void {
-  server.registerTool(
-    "mixin_targets",
-    {
-      title: "Mixin targets",
-      description:
-        "Real methods of a Minecraft class (descriptors, ready-to-paste selectors) and the injection points inside them (INVOKE/FIELD/NEW targets read from bytecode) for an exact version and mappings, plus hints when a loader event covers the same need.",
-      inputSchema: mixinTargetsInput,
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    (a) => guard(() => mixinTargets(services, a)),
-  );
-  server.registerTool(
-    "mixin_validate",
-    {
-      title: "Validate mixins",
-      description:
-        "Statically validate a project's mixins before running the game: mixins.json (package, listed classes exist, unlisted @Mixin classes, registration, compatibilityLevel vs. the bundled Mixin, refmap), target classes, method selectors/descriptors, @At INVOKE/FIELD/NEW targets (checked in the target's bytecode), handler signatures, @Accessor/@Invoker/@Shadow members, client-only targets in common lists, MixinExtras availability.",
-      inputSchema: mixinValidateInput,
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    (a) => guard(() => mixinValidate(services, a)),
   );
 }
