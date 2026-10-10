@@ -45,7 +45,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "search_mc_source",
     title: "Search Minecraft code",
-    description: "Search Minecraft classes/methods/fields (exact version and names), grep source text, or find usages (callers, field access, class references) from bytecode. Paged one-line results.",
+    description: "Search Minecraft classes/methods/fields (exact version and names), grep source text, find usages (callers, field access, class references) or callees from bytecode, browse packages. Paged one-line results.",
     input: S.searchInput,
     load: async () => (await import("./source.js")).searchMcSource as Impl,
   },

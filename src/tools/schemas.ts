@@ -42,9 +42,9 @@ export const gradleBuildInput = {
 
 export const searchInput = {
   ...indexSpecShape,
-  query: z.string().min(1).describe("Name fragment or /regex/. text: regex over source lines. usages: Class, Class#method[(desc)] or Class#field."),
-  kind: z.enum(["any", "class", "method", "field", "text", "usages"]).optional().describe("any (default): names. text: grep sources (decompiled lazily if no sources jar). usages: callers/readers from bytecode."),
-  limit: z.number().int().min(1).max(200).optional().describe("Default 30."),
+  query: z.string().min(1).describe("Name fragment or /regex/. text: regex over source lines. usages: Class, Class#method[(desc)] or Class#field. callees: Class#method[(desc)]. packages: package or \".\"."),
+  kind: z.enum(["any", "class", "method", "field", "text", "usages", "callees", "packages"]).optional().describe("any (default): names. text: grep sources (decompiled lazily if no sources jar). usages: callers/readers from bytecode. callees: what a method calls/reads. packages: subpackages + classes."),
+  limit: z.number().int().min(1).max(200).optional().describe("Default 30 (packages 100)."),
   offset,
 };
 

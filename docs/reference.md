@@ -10,7 +10,7 @@ Detailed behaviour of the tools. Short overview: [README](../README.md).
 | `get_profile` | ✅ | Resolved profile for `(mcVersion, loader)`: Java, Gradle + plugin, metadata file, mappings, Mixin registration/refmap/MixinExtras/max compatibility level, with extrapolation warnings |
 | `gradle_build` | ✅ | Runs Gradle tasks with an automatically chosen JDK, timeout and full log; returns structured findings (javac `file:line` errors, Mixin AP, dependency resolution, JVM/toolchain mismatch…) |
 | `analyze_crash` | ✅ | Crash report / log analysis: root exception, Mixin failures, missing/duplicate mods, class-version problems; scores the most likely culprit mod |
-| `search_mc_source` | ✅ | Class/member search (names, descriptors), **usages** (`kind: "usages"`: who calls a method / reads a field / references a class, from bytecode) and text search in sources of the exact MC version: vanilla, as seen by the project, or Forge/NeoForge-patched without a project (`source: "loader"`). Text search works without a sources jar (classes are decompiled lazily, in batches). One line per hit, 30 per page (`offset`/`limit`), snippets clipped |
+| `search_mc_source` | ✅ | Class/member search (names, descriptors), **usages** (`kind: "usages"`: who calls a method / reads a field / references a class, from bytecode), **callees** (`kind: "callees"`, `query: Class#method[(desc)]`: what the method calls / reads / writes / passes as a method reference, lambda bodies followed and marked `(lambda)`), **package browsing** (`kind: "packages"`, `query`: package, a unique suffix like `level.block`, or `.` for the root: subpackages with class counts, then top-level classes with `interface`/`enum`/`record`/`abstract`; 100 per page) and text search in sources of the exact MC version: vanilla, as seen by the project, or Forge/NeoForge-patched without a project (`source: "loader"`). Text search works without a sources jar (classes are decompiled lazily, in batches). One line per hit, 30 per page (`offset`/`limit`), snippets clipped |
 | `get_class` | ✅ | **Outline by default**: header (super, interfaces, annotations), fields and method signatures with compact JVM descriptors (= ready Mixin selectors), no bodies; `members`/`memberFilter` filters. `method` returns just that method's source (overloads capped at 5). `detail: "hierarchy"` returns super chain, all interfaces and subtypes; with `method`, where it is overridden. `detail: "full"` returns source paged by lines (300 by default) with a "more" hint. Source comes from the loader's sources jar or Vineflower |
 | `translate_mapping` | ✅ | Class/method/field names across Mojmap ↔ Yarn ↔ Intermediary ↔ SRG ↔ obfuscated (identity on unobfuscated 26.x+) |
 | `mixin_targets` | ✅ | **Loader event hints first**, then the class's method selectors (paged). With `methodFilter` (≤3 matches) or `injectionPoints: true`: concise injection points from bytecode (`HEAD \| RETURN ×n \| TAIL`, INVOKE/FIELD/NEW/CONSTANT targets deduped, `maxPoints` per kind, lambdas) |
@@ -78,7 +78,9 @@ cached). **Text search without a sources jar** prefilters classes by the literal
 pools, then decompiles up to 40 candidates per call in batches (≈ 3 s for 20 classes, ≈ 1 s cached); results come in a
 stable order and the answer says how to continue. **Navigation:** a constant-pool reference table (`refs.json`, built
 once per index in ≈ 4 s) answers usages (`LivingEntity#hurt` → 66 call sites with their opcode, including calls via a
-subclass), and `get_class detail=hierarchy` gives supertypes, subtypes and overrides.
+subclass), callees (`MinecraftServer#tickServer` → 27 deduped `call`/`get`/`put`/`ref` lines in < 1 s, overloads grouped when
+no descriptor is given) and `get_class detail=hierarchy` gives supertypes, subtypes and overrides. `kind: "packages"` lists a
+package from the class index (`net.minecraft.world.level.block` on 1.21.1: 4 subpackages, 292 classes).
 Mappings: Mojang ProGuard files, Fabric Intermediary and Yarn (tiny v2) and MCPConfig (tsrg2), joined on obfuscated names.
 SRG names are offered only where they are real (`m_N_` up to 1.20.x Forge).
 
@@ -264,4 +266,5 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 - ~~**0.6 — Mixin docs:** Mixin / MixinExtras / Fabric mixin docs in `docs_search` (`topic`, `sources`); `run_client` / `run_server` removed.~~ ✅
 - ~~**0.7 — bring your own project:** `create_project` removed; detection from MDK build files.~~ ✅
 - ~~**0.8 — navigation & robustness:** usages/hierarchy/overrides, text search via lazy decompilation, `source: "loader"`, multi-project builds, real Java parser + LVT checks, pack format from `version.json`, docs 404/fallback labels, cross-platform JDK discovery, lazy tool loading (−27 % `tools/list` tokens).~~ ✅
+- ~~**0.9 — code map:** `search_mc_source` `kind: "callees"` (reverse of usages, lambdas followed) and `kind: "packages"` (package browsing); +48 `tools/list` tokens, no new tool.~~ ✅
 - **Next (proposal):** scope-aware `@Local` checks, MixinExtras expression checks.

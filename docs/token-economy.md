@@ -34,4 +34,4 @@ Approximate tokens (characters / 4), measured with `scripts/measure-tokens.mjs` 
 
 Tool definitions and startup (`scripts/measure-startup.mjs`, median of 7 runs; 0.7.0 → 0.8.0, same 11 tools with more features):
 `tools/list` 4,303 → 3,149 tokens, server instructions 392 → 206 tokens, start-up to first `tools/list` 339 → 246 ms,
-RSS 92 → 76 MB. Tool modules and their dependencies (index, Java parser, Vineflower glue, docs) load on first call.
+RSS 92 → 76 MB. 0.9.0: 3,197 tokens (+48 for `search_mc_source` `kind: callees`/`packages`). Tool modules and their dependencies (index, Java parser, Vineflower glue, docs) load on first call.

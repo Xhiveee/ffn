@@ -7,6 +7,7 @@ import { clip, fail, ok, okText, page } from "./result.js";
 import { extractMethods, paramsMatch } from "../index/javasrc.js";
 import { allInterfaces, allSubtypes, directSubtypes, findUsages, overrides, parseTarget, superChain, type Usage, type UsageTarget } from "../index/xref.js";
 import { searchInput, getClassInput, translateInput } from "./schemas.js";
+import { findCallees, listPackage, resolvePackage } from "../index/browse.js";
 
 
 type SpecArgs = { mcVersion?: string; mappings?: (typeof INDEX_NAMESPACES)[number]; loader?: string; projectDir?: string; source?: "auto" | "vanilla" | "project" | "loader" };
@@ -73,6 +74,42 @@ async function textSearch(services: Services, index: McIndex, re: RegExp, offset
   };
 }
 
+function packagesView(index: McIndex, query: string, offset: number, limit: number, notes: string[]) {
+  const { pkg, candidates } = resolvePackage(index, query);
+  if (pkg === undefined) return fail(`Package ${query} not found (${indexLine(index)}).${candidates.length ? ` Candidates: ${candidates.slice(0, 10).map(dotted).join(", ")}` : " Use \".\" for the root."}`);
+  const all = listPackage(index, pkg);
+  const subs = all.filter((e) => e.kind === "package").length;
+  const pg = page(all, offset, limit);
+  const lines = pg.items.map((e) => (e.kind === "package" ? `${e.name}/ (${e.info})` : `${e.name}${e.info ? ` ${e.info}` : ""}`));
+  return okText([`${dotted(pkg) || "(root)"}: ${subs} subpackage(s) (class count), ${all.length - subs} class(es) (${indexLine(index)})${pg.more ? ` — ${pg.more}` : ""}.`, ...lines, ...notes.map((n) => `note: ${n}`)].join("\n"));
+}
+
+function calleesView(index: McIndex, query: string, offset: number, limit: number, notes: string[]) {
+  const t = parseTarget(query);
+  if (!t.member) return fail(`callees needs a method: Class#method or Class#method(desc).`);
+  const found = index.resolve(t.cls);
+  if (found.length !== 1) return fail(found.length ? `"${t.cls}" is ambiguous: ${found.slice(0, 8).map(dotted).join(", ")}.` : `Class ${t.cls} not found (${indexLine(index)}).`);
+  const owner = found[0]!;
+  const c = index.get(owner)!;
+  const descs = c.m.filter(([n, d]) => n === t.member && (!t.desc || d === t.desc)).map(([, d]) => d);
+  if (!descs.length) {
+    const inh = index.hierarchy(owner).slice(1).find((h) => h.m.some(([n, d]) => n === t.member && (!t.desc || d === t.desc)));
+    return fail(`${dotted(owner)} declares no method ${t.member}${t.desc ?? ""}.${inh ? ` Declared in ${dotted(inh.n)}.` : ""}`);
+  }
+  const fmt = (x: { how: string; owner: string; name: string; desc: string; inLambda?: boolean }) =>
+    `${x.how.padEnd(4)} ${dotted(x.owner)}#${x.name}${x.desc.startsWith("(") ? x.desc : `:${x.desc}`}${x.inLambda ? " (lambda)" : ""}`;
+  const items: string[] = [];
+  for (const d of descs.slice(0, 5)) {
+    const cs = findCallees(index, owner, t.member, d) ?? [];
+    if (descs.length > 1) items.push(`${t.member}${d}: ${cs.length}`);
+    if (!cs.length) items.push(`  (no bytecode: abstract/native — see get_class detail=hierarchy method=${t.member})`);
+    items.push(...cs.map(fmt));
+  }
+  const pg = page(items, offset, limit);
+  const what = `${dotted(owner)}#${t.member}${descs.length === 1 ? descs[0] : ""}`;
+  return okText([`Callees of ${what}${descs.length > 5 ? ` (5 of ${descs.length} overloads; pass a desc)` : ""} (${indexLine(index)}; bytecode, deduped)${pg.more ? ` — ${pg.more}` : ""}:`, ...pg.items, ...notes.map((n) => `note: ${n}`)].join("\n"));
+}
+
 function usageLine(u: Usage): string {
   return `${dotted(u.cls)}${u.method ? `#${u.method}` : ""}  ${u.how}${u.via ? ` via ${dotted(u.via)}` : ""}`;
 }
@@ -81,6 +118,8 @@ export async function searchMcSource(services: Services, a: Search) {
   const { index, notes } = await services.indexes.open(toSpec(a));
   const limit = a.limit ?? 30;
   const offset = a.offset ?? 0;
+  if (a.kind === "packages") return packagesView(index, a.query, offset, a.limit ?? 100, notes);
+  if (a.kind === "callees") return calleesView(index, a.query, offset, limit, notes);
   if (a.kind === "usages") {
     const t = parseTarget(a.query);
     const found = index.resolve(t.cls);

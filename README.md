@@ -83,7 +83,7 @@ args = ["/home/you/ffn/dist/index.js"]
 - `list_versions` (`mcVersion?`, `includeSnapshots?`) — версии Minecraft и есть ли под них загрузчики; с `mcVersion` — версии загрузчиков, Java и Gradle-плагина.
 - `get_profile` (`mcVersion`, `loader`) — что нужно для сборки: Java, Gradle-плагин, файл метаданных, маппинги, правила Mixin, pack format.
 - `gradle_build` (`projectDir`, `tasks?`) — запускает Gradle с подходящей JDK и возвращает ошибки в виде `файл:строка`.
-- `search_mc_source` (`query`, `kind`: имена / `text` / `usages`, `mcVersion` или `projectDir`, `source?`) — поиск классов и методов, текста в исходниках и мест использования.
+- `search_mc_source` (`query`, `kind`: имена / `text` / `usages` / `callees` / `packages`, `mcVersion` или `projectDir`, `source?`) — поиск классов и методов, текста в исходниках, кто вызывает метод (`usages`) и что вызывает он сам (`callees`), обзор пакета: подпакеты и классы (`packages`, `query: "."` — корень).
 - `get_class` (`className`, `method?`, `detail`: `outline` / `hierarchy` / `full`) — класс кратко (outline), исходник одного метода, иерархия и переопределения или полный исходник постранично.
 - `translate_mapping` (`mcVersion`, `name`, `from`, `to?`) — перевод имён между Mojmap, Yarn, Intermediary, SRG и obf.
 - `mixin_targets` (`targetClass`, `methodFilter?`) — готовые селекторы и точки инъекции; сначала подсказывает подходящие события загрузчика.

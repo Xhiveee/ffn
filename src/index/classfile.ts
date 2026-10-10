@@ -52,6 +52,8 @@ export class ClassReader {
   readonly pool: Const[] = [];
   readonly info: ClassInfo;
   private pos = 0;
+  /** Offset of the BootstrapMethods attribute body (for invokedynamic method handles). */
+  private bsmAt?: number;
 
   constructor(readonly buf: Buffer) {
     if (buf.readUInt32BE(0) !== 0xcafebabe) throw new Error("Not a class file");
@@ -97,6 +99,7 @@ export class ClassReader {
       const len = this.u4();
       if (an === "Signature") signature = this.utf8(buf.readUInt16BE(this.pos));
       else if (an === "SourceFile") sourceFile = this.utf8(buf.readUInt16BE(this.pos));
+      else if (an === "BootstrapMethods") this.bsmAt = this.pos;
       else if (an === "RuntimeVisibleAnnotations" || an === "RuntimeInvisibleAnnotations") {
         try {
           annotations.push(...this.annotationTypes(this.pos));
@@ -201,9 +204,30 @@ export class ClassReader {
     return m;
   }
 
+  /** Method handles among the static arguments of an invokedynamic's bootstrap method (excluding the bootstrap itself). */
+  private indyHandles(idx: number): { owner: string; name: string; desc: string; field: boolean }[] {
+    const c = this.pool[idx];
+    if (!c || c.tag !== 18 || this.bsmAt === undefined) return [];
+    try {
+      const b = this.buf;
+      let p = this.bsmAt + 2;
+      for (let k = 0; k < c.bsm; k++) p += 4 + b.readUInt16BE(p + 2) * 2;
+      const out: { owner: string; name: string; desc: string; field: boolean }[] = [];
+      for (let n = b.readUInt16BE(p + 2), q = p + 4; n > 0; n--, q += 2) {
+        const a = this.pool[b.readUInt16BE(q)];
+        if (a?.tag !== 15) continue;
+        const r = this.pool[a.refIndex];
+        if (r && (r.tag === 9 || r.tag === 10 || r.tag === 11)) out.push({ ...this.ref(a.refIndex), field: r.tag === 9 });
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
   /** Walk a method's bytecode and collect references usable as Mixin @At targets. */
   analyze(m: MethodInfo): CodeRefs {
-    const refs: CodeRefs = { invokes: [], fields: [], news: [], constants: [], returns: 0, instanceofs: [], jumps: 0, typedConstants: [], locals: [], jumpOps: [], seq: [] };
+    const refs: CodeRefs = { invokes: [], fields: [], news: [], constants: [], returns: 0, instanceofs: [], jumps: 0, typedConstants: [], locals: [], jumpOps: [], seq: [], handles: [] };
     if (!m.code) return refs;
     const b = this.buf;
     const base = m.code.start;
@@ -292,7 +316,11 @@ export class ClassReader {
           p += op === 0xb9 ? 5 : 3;
           break;
         }
-        case op === 0xba: p += 5; break;
+        case op === 0xba: {
+          for (const h of this.indyHandles(b.readUInt16BE(p + 1))) addOnce(refs.handles, `h:${h.owner}.${h.name}${h.desc}`, h);
+          p += 5;
+          break;
+        }
         case op === 0xbb: {
           const cls = this.className(b.readUInt16BE(p + 1))!;
           addOnce(refs.news, `n:${cls}`, cls);
@@ -339,6 +367,8 @@ export interface CodeRefs {
   /** Instruction sequence of injection-relevant nodes, for @Slice ordering checks. */
   seq: { pc: number; kind: "INVOKE" | "FIELD" | "NEW" | "CONSTANT" | "JUMP" | "LOAD" | "STORE" | "RETURN"; key: string; opcode?: string }[];
   invokes: { owner: string; name: string; desc: string; opcode: string }[];
+  /** Method/field handles passed to invokedynamic bootstraps (lambda bodies, method references). */
+  handles: { owner: string; name: string; desc: string; field: boolean }[];
   fields: { owner: string; name: string; desc: string; opcode: string }[];
   news: string[];
   constants: string[];
