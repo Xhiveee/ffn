@@ -90,3 +90,36 @@ describe("loader workspaces", () => {
     expect(existsSync(path.join(dir, "out/src/main/java/A.java"))).toBe(true);
   });
 });
+
+describe("pack format from version.json", () => {
+  it("normalises pack_version shapes", async () => {
+    const { parsePackVersion } = await import("../src/sources/packformat.js");
+    expect(parsePackVersion('{"pack_version":7}')).toEqual({ resource: "7", data: "7" });
+    expect(parsePackVersion('{"pack_version":{"resource":34,"data":48}}')).toEqual({ resource: "34", data: "48" });
+    expect(parsePackVersion('{"pack_version":{"resource_major":97,"resource_minor":1,"data_major":121,"data_minor":0}}')).toEqual({ resource: "97.1", data: "121" });
+    expect(parsePackVersion("{}")).toBeUndefined();
+  });
+  it("reads one zip entry over HTTP range requests", async () => {
+    const http = await import("node:http");
+    const { remoteZipEntry } = await import("../src/sources/packformat.js");
+    const zip = new AdmZip();
+    zip.addFile("a/b.class", Buffer.alloc(5000, 1));
+    zip.addFile("version.json", Buffer.from(JSON.stringify({ pack_version: { resource: 15, data: 15 }, pad: "x".repeat(3000) })));
+    const buf = zip.toBuffer();
+    const srv = http.createServer((req, res) => {
+      const m = /bytes=(\d*)-(\d*)/.exec(req.headers.range ?? "")!;
+      const [s, e] = m[1] === "" ? [Math.max(0, buf.length - Number(m[2])), buf.length - 1] : [Number(m[1]), Math.min(buf.length - 1, m[2] ? Number(m[2]) : buf.length - 1)];
+      res.writeHead(206, { "Content-Length": e - s + 1 });
+      res.end(buf.subarray(s, e + 1));
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+    const port = (srv.address() as { port: number }).port;
+    try {
+      const got = await remoteZipEntry(`http://127.0.0.1:${port}/client.jar`, "t", "version.json");
+      expect(JSON.parse(got!.toString()).pack_version).toEqual({ resource: 15, data: 15 });
+      expect(await remoteZipEntry(`http://127.0.0.1:${port}/client.jar`, "t", "nope.json")).toBeUndefined();
+    } finally {
+      srv.close();
+    }
+  });
+});

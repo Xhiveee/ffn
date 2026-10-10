@@ -42,7 +42,7 @@ rules:
         mixinExtras:
           bundled: false
           note: Not bundled on 1.20.1. Add io.github.llamalad7:mixinextras-forge via jarJar and call MixinExtrasBootstrap.init().
-      packMeta: { kind: pack_format, format: 15 }
+      packMeta: { kind: pack_format }
       references:
         - https://github.com/neoforged/MDK/tree/1.20.1-legacy
         - https://github.com/neoforged/ModDevGradle/blob/main/LEGACY.md
@@ -50,7 +50,8 @@ rules:
         - NeoForge for 1.20.1 is frozen at 47.1.x; most 1.20.1 mods target MinecraftForge instead (loader=forge).
 
   - since: "1.20.2"
-    description: NeoForge 20.2+ via ModDevGradle
+    description: NeoForge 20.2+ via ModDevGradle (official 1.20.2 MDK uses NeoGradle 7; both work)
+    verified: ["1.20.2"] # official MDK + a mixin compiled and validated; Mixin libs from the userdev config
     set:
       gradle: { version: "9.2.1" }
       buildSystem: moddevgradle
@@ -68,13 +69,13 @@ rules:
       mixin:
         registration: mods.toml # [[mixins]] config="<modid>.mixins.json"
         devRunArg: false
-        refmap: false
+        refmap: false # Mojang names at runtime from 20.2 on (the universal jar contains no SRG names)
         annotationProcessor: null
         compatibilityLevel: auto
-        maxCompatibilityLevel: null # sponge-mixin version not verified for 20.2-21.0
+        maxCompatibilityLevel: JAVA_18 # org.spongepowered:mixin 0.8.5
         mixinExtras:
-          bundled: false
-          note: Add MixinExtras via jarJar on 20.2.
+          bundled: true
+          note: NeoForge bundles MixinExtras since 20.2.84 (0.3.x); on older 20.2 builds add it via jarJar.
       packMeta: { kind: none }
       references:
         - https://github.com/NeoForgeMDKs
@@ -82,14 +83,16 @@ rules:
       notes: []
 
   - since: "1.20.4"
+    verified: ["1.20.4"] # official MDK (ModDevGradle) + a mixin compiled and validated
     set:
       mixin:
+        maxCompatibilityLevel: JAVA_22 # net.fabricmc:sponge-mixin 0.13.x (20.4-20.6), 0.14.0 (21.0)
         mixinExtras:
           bundled: true
-          note: NeoForge ships MixinExtras (20.4+).
+          note: NeoForge ships MixinExtras.
 
   - since: "1.20.5"
-    description: neoforge.mods.toml replaces mods.toml; Mojang names at runtime
+    description: neoforge.mods.toml replaces mods.toml
     set:
       metadata:
         file: META-INF/neoforge.mods.toml

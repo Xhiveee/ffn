@@ -132,7 +132,7 @@ rules:
     verified: ["1.99.0"]
     set:
       gradle: { version: "10.0" }
-      packMeta: { kind: min_max, format: 200 }
+      packMeta: { kind: min_max, format: 200 } # explicit format still overrides version.json
       addNotes: ["custom rule"]
 `,
     );

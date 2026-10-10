@@ -40,7 +40,7 @@ rules:
         mixinExtras:
           bundled: false
           note: Not bundled. Add io.github.llamalad7:mixinextras-forge via jarJar and call MixinExtrasBootstrap.init().
-      packMeta: { kind: pack_format, format: 15 }
+      packMeta: { kind: pack_format }
       references:
         - https://github.com/NeoForgeMDKs/MDK-Forge-1.20.1-ModDevGradle
         - https://github.com/neoforged/ModDevGradle/blob/main/LEGACY.md
@@ -68,23 +68,14 @@ rules:
         refmap: true # SRG at runtime until 1.20.6
         annotationProcessor: org.spongepowered:mixin:0.8.5:processor
         mixinGradle: { id: org.spongepowered.mixin, version: "0.7.+" }
-      packMeta: { kind: pack_format, format: 18 }
+      packMeta: { kind: pack_format }
       reobfJar: true
       references:
         - https://maven.minecraftforge.net/net/minecraftforge/forge/ (forge-<mc>-<ver>-mdk.zip)
       notes: []
 
-  # Resource-pack formats below are the published values for each release; Forge only logs
-  # a warning on mismatch, so an extrapolated value is harmless for a new version.
-  - { since: "1.20.3", set: { packMeta: { format: 22 } } }
-  - { since: "1.20.5", set: { packMeta: { format: 32 } } }
-  - { since: "1.21", set: { packMeta: { format: 34 } } }
-  - { since: "1.21.2", set: { packMeta: { format: 42 } } }
-  - { since: "1.21.4", set: { packMeta: { format: 46 } } }
-  - { since: "1.21.5", set: { packMeta: { format: 55 } } }
-  - { since: "1.21.6", set: { packMeta: { format: 63 } } }
-  - { since: "1.21.7", set: { packMeta: { format: 64 } } }
-  - { since: "1.21.9", set: { packMeta: { kind: min_max, format: 69 } } }
+  # pack.mcmeta syntax only; the format number comes from Mojang's version.json (pack_version) at lookup time.
+  - { since: "1.21.9", set: { packMeta: { kind: min_max } } }
 
   - since: "1.20.6"
     description: Forge runs on Mojang names from 1.20.6 — no refmap, no reobfJar
@@ -115,11 +106,11 @@ rules:
         mixinExtras:
           bundled: true
           note: Forge 1.21.11+ ships mixinextras-forge (seen in the installer's library list).
-      packMeta: { kind: min_max, format: 94 }
+      packMeta: { kind: min_max }
       references:
         - https://github.com/MinecraftForge/MDKExamples/tree/main/mixins-only/fg7
 
   - since: "26.3"
     verified: ["26.3"]
     set:
-      packMeta: { kind: min_max, format: 121 }
+      packMeta: { kind: min_max }

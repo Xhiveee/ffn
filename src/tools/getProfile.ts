@@ -13,8 +13,15 @@ export const getProfileInput = {
 
 export async function getProfile(services: Services, args: { mcVersion: string; loader: "forge" | "fabric" | "neoforge"; verbose?: boolean }) {
   const { profile, release, facts, notes } = await lookupProfile(services, args.loader, args.mcVersion.trim());
+  let packMeta: Record<string, unknown> = { ...profile.packMeta };
+  if (profile.packMeta.kind !== "none" && profile.packMeta.format === undefined) {
+    const { packFormat } = await import("../sources/packformat.js");
+    const pf = await packFormat(services, release).catch(() => undefined);
+    if (pf) packMeta = { kind: profile.packMeta.kind, format: Number(pf.resource.split(".")[0]), ...(pf.resource.includes(".") ? { resource: pf.resource } : {}), data: pf.data, from: "version.json" };
+  }
   const full = {
     ...profile,
+    packMeta,
     mixin: { ...profile.mixin, effectiveCompatibilityLevel: mixinCompatibilityLevel(profile) },
     profileRelease: release,
     facts,
