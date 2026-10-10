@@ -54,9 +54,10 @@ export async function lookupProfile(
   try {
     const details = await services.versions.mojangVersion(mcVersion, notes);
     if (!details) {
+      facts = { known: false };
       notes.warn(`Minecraft ${mcVersion} is not in Mojang's version manifest; Java version and obfuscation could not be verified.`);
     } else {
-      facts = { javaMajor: details.javaMajor, obfuscated: details.obfuscated };
+      facts = { javaMajor: details.javaMajor, obfuscated: details.obfuscated, known: true };
     }
   } catch (e) {
     notes.warn(`Could not read Mojang metadata for ${mcVersion}: ${(e as Error).message}`);

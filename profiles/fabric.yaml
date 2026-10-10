@@ -13,7 +13,8 @@ rules:
     verified: ["1.20.1"]
     set:
       java: auto
-      gradle: { version: "9.7.1" }
+      # Loom 1.18 is published for Java 25: Gradle must RUN on JDK 25 even when the mod targets Java 17.
+      gradle: { version: "9.7.1", minJvm: 25 }
       buildSystem: fabric-loom
       plugin:
         id: net.fabricmc.fabric-loom-remap

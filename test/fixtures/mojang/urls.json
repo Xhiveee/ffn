@@ -1,0 +1,7 @@
+{
+ "https://piston-meta.mojang.com/v1/packages/760a390e336b2b6202ec5906757cee3a929a7c85/1.20.1.json": "mojang/1.20.1.json",
+ "https://piston-meta.mojang.com/v1/packages/cedfc3b6dcbca34e2b478d498bf1d56a8fa2f404/1.21.1.json": "mojang/1.21.1.json",
+ "https://piston-meta.mojang.com/v1/packages/6827f8e998ee6add1b3acff9286b6c95ebeebdc1/1.21.11.json": "mojang/1.21.11.json",
+ "https://piston-meta.mojang.com/v1/packages/702fe59163c6ee6578607daa85811d9bc9c7cc40/26.3.json": "mojang/26.3.json",
+ "https://piston-meta.mojang.com/v1/packages/230b1af3753fcf01d807287e6cd8557db5a085ed/1.20.2.json": "mojang/1.20.2.json"
+}

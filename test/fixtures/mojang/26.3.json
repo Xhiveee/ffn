@@ -1,0 +1,17 @@
+{
+ "id": "26.3",
+ "type": "release",
+ "releaseTime": "2026-09-15T11:23:02+00:00",
+ "javaVersion": {
+  "component": "java-runtime-epsilon",
+  "majorVersion": 25
+ },
+ "downloads": {
+  "client": {
+   "url": "(trimmed)"
+  },
+  "server": {
+   "url": "(trimmed)"
+  }
+ }
+}

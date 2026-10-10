@@ -47,7 +47,14 @@ export function esc(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
 }
 
-/** Escape a value for a .properties file. */
+/**
+ * Escape a value for a .properties file. Gradle reads gradle.properties as ISO-8859-1,
+ * so everything outside printable ASCII (e.g. Cyrillic mod names) becomes \uXXXX.
+ */
 export function propEsc(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/^\s/, "\\ ");
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/^\s/, "\\ ")
+    .replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }

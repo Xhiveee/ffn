@@ -1,0 +1,23 @@
+{
+ "id": "1.20.1",
+ "type": "release",
+ "releaseTime": "2023-06-12T13:25:51+00:00",
+ "javaVersion": {
+  "component": "java-runtime-gamma",
+  "majorVersion": 17
+ },
+ "downloads": {
+  "client": {
+   "url": "(trimmed)"
+  },
+  "client_mappings": {
+   "url": "(trimmed)"
+  },
+  "server": {
+   "url": "(trimmed)"
+  },
+  "server_mappings": {
+   "url": "(trimmed)"
+  }
+ }
+}

@@ -147,7 +147,9 @@ export function projectReadme(ctx: ProjectContext): string {
     "./gradlew runClient    # start a dev client with the mod loaded",
     "```",
     "",
-    `Requires a JDK ${profile.java} (Gradle's toolchain support can download it automatically).`,
+    profile.gradle.minJvm && profile.gradle.minJvm > profile.java
+      ? `Gradle must run on JDK ${profile.gradle.minJvm}+ (required by ${profile.plugin.id}); the mod itself is compiled for Java ${profile.java}.`
+      : `Requires a JDK ${profile.java} (Gradle's toolchain support can download it automatically).`,
     "",
   ];
   if (profile.warnings.length) {

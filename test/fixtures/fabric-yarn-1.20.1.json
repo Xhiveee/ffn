@@ -1,0 +1,82 @@
+[
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 10,
+    "maven": "net.fabricmc:yarn:1.20.1+build.10",
+    "version": "1.20.1+build.10",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 9,
+    "maven": "net.fabricmc:yarn:1.20.1+build.9",
+    "version": "1.20.1+build.9",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 8,
+    "maven": "net.fabricmc:yarn:1.20.1+build.8",
+    "version": "1.20.1+build.8",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 7,
+    "maven": "net.fabricmc:yarn:1.20.1+build.7",
+    "version": "1.20.1+build.7",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 6,
+    "maven": "net.fabricmc:yarn:1.20.1+build.6",
+    "version": "1.20.1+build.6",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 5,
+    "maven": "net.fabricmc:yarn:1.20.1+build.5",
+    "version": "1.20.1+build.5",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 4,
+    "maven": "net.fabricmc:yarn:1.20.1+build.4",
+    "version": "1.20.1+build.4",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 3,
+    "maven": "net.fabricmc:yarn:1.20.1+build.3",
+    "version": "1.20.1+build.3",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 2,
+    "maven": "net.fabricmc:yarn:1.20.1+build.2",
+    "version": "1.20.1+build.2",
+    "stable": false
+  },
+  {
+    "gameVersion": "1.20.1",
+    "separator": "+build.",
+    "build": 1,
+    "maven": "net.fabricmc:yarn:1.20.1+build.1",
+    "version": "1.20.1+build.1",
+    "stable": false
+  }
+]

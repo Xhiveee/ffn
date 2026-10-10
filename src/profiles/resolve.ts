@@ -15,6 +15,8 @@ export interface VersionFacts {
   javaMajor?: number;
   /** Mojang publishes client_mappings → the game jar is obfuscated. */
   obfuscated?: boolean;
+  /** false when Mojang's manifest does not list this version (e.g. a typo or a hypothetical 1.99.0). */
+  known?: boolean;
 }
 
 export class ProfileResolutionError extends Error {}
@@ -101,8 +103,16 @@ export function resolveProfile(
     .at(-1) ?? profile.minVersion;
 
   const verified = matched.some((r) => r.verified?.includes(mcVersion));
-  const extrapolated = compareMcVersions(mcVersion, profile.testedUpTo) > 0;
-  if (extrapolated) {
+  const newer = compareMcVersions(mcVersion, profile.testedUpTo) > 0;
+  const unknown = facts.known === false;
+  const extrapolated = newer || unknown;
+  if (unknown && !newer) {
+    warnings.push(
+      `UNVERIFIED: Minecraft ${mcVersion} is not a known release, so no profile rule was verified for it. ` +
+        `Settings were taken from the closest lower rule (since ${basedOn}).`,
+    );
+  }
+  if (newer) {
     warnings.push(
       `UNVERIFIED: Minecraft ${mcVersion} is newer than the newest version the ${loader} profile was verified against (${profile.testedUpTo}). ` +
         `Settings were extrapolated from the closest lower rule (since ${basedOn}). Build the project and, if anything differs, ` +

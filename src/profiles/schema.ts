@@ -90,7 +90,13 @@ export const ProfileFieldsSchema = z
   .object({
     /** "auto" = read `javaVersion.majorVersion` from Mojang's per-version JSON. */
     java: z.union([z.literal("auto"), z.number().int().min(8)]),
-    gradle: z.object({ version: z.string() }).strict(),
+    gradle: z
+      .object({
+        version: z.string(),
+        /** Minimum JDK needed to *run* Gradle with this plugin (may exceed the mod's Java target). */
+        minJvm: z.number().int().optional(),
+      })
+      .strict(),
     buildSystem: BuildSystemSchema,
     plugin: PluginSchema,
     /** Maven coordinate of the loader artifact (group:artifact), when relevant. */
@@ -110,7 +116,7 @@ export type ProfileFields = z.infer<typeof ProfileFieldsSchema>;
 const PartialFields = z
   .object({
     java: ProfileFieldsSchema.shape.java.optional(),
-    gradle: z.object({ version: z.string() }).partial().strict().optional(),
+    gradle: z.object({ version: z.string(), minJvm: z.number().int() }).partial().strict().optional(),
     buildSystem: BuildSystemSchema.optional(),
     plugin: PluginSchema.partial().strict().optional(),
     loaderArtifact: z.string().optional(),

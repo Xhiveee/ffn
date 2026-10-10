@@ -1,0 +1,23 @@
+{
+ "id": "1.21.1",
+ "type": "release",
+ "releaseTime": "2024-08-08T12:24:45+00:00",
+ "javaVersion": {
+  "component": "java-runtime-delta",
+  "majorVersion": 21
+ },
+ "downloads": {
+  "client": {
+   "url": "(trimmed)"
+  },
+  "client_mappings": {
+   "url": "(trimmed)"
+  },
+  "server": {
+   "url": "(trimmed)"
+  },
+  "server_mappings": {
+   "url": "(trimmed)"
+  }
+ }
+}

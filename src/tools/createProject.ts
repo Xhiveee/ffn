@@ -50,7 +50,7 @@ export async function createProject(services: Services, args: Args) {
     mappings: params.mappings,
     mainClass: `${params.package}.${params.mainClass}`,
     versions,
-    toolchain: { java: profile.java, gradle: profile.gradle.version, buildSystem: profile.buildSystem, plugin: profile.plugin.id },
+    toolchain: { java: profile.java, gradleJvm: Math.max(profile.java, profile.gradle.minJvm ?? 17), gradle: profile.gradle.version, buildSystem: profile.buildSystem, plugin: profile.plugin.id },
     mixin: {
       config: `${params.modId}.mixins.json`,
       registration: profile.mixin.registration,
@@ -64,7 +64,7 @@ export async function createProject(services: Services, args: Args) {
   };
   return ok(
     `${args.dryRun ? "Planned" : "Created"} ${params.loader} ${params.mcVersion} project "${params.modName}" (${files.length} files) in ${target}. ` +
-      `Requires JDK ${profile.java}; run ./gradlew build.` +
+      `Targets Java ${profile.java}; run Gradle with JDK ${Math.max(profile.java, profile.gradle.minJvm ?? 17)}+ (./gradlew build).` +
       (plan.warnings.length ? `\nWarnings:\n- ${plan.warnings.join("\n- ")}` : ""),
     data,
   );
