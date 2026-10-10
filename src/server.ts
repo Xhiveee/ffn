@@ -11,14 +11,17 @@ import { registerDocsTools } from "./tools/docs.js";
 import { registerCheckProfiles } from "./tools/checkProfiles.js";
 
 export const SERVER_NAME = "ffn";
-export const SERVER_VERSION = "0.4.1";
+export const SERVER_VERSION = "0.5.0";
 
-const INSTRUCTIONS = `FFN (ForgeFabricNeoForge) helps you build Minecraft mods for Forge, Fabric and NeoForge (Minecraft 1.20.1 → latest).
+const INSTRUCTIONS = `FFN (ForgeFabricNeoForge) gives you the real Minecraft and loader classes, mappings, docs and build tooling for Forge, Fabric and NeoForge (Minecraft 1.20.1 → latest).
 - Never guess versions: call list_versions (live data) and get_profile before writing build files.
+- Save tokens: read classes outline-first. get_class (default outline: signatures only) → get_class method="<name>" for one
+  method's source → detail="full" (paged) only when really needed. search_mc_source and mixin_targets are paged; pass
+  methodFilter to mixin_targets to get injection points for just the method you need.
+- Prefer loader events/APIs over mixins: mixin_targets prints event hints first. When a mixin is needed, take selectors
+  from get_class / mixin_targets (name(descriptor) is the selector) and check your mixin with mixin_validate.
+- Use translate_mapping instead of guessing names across Mojmap/Yarn/Intermediary/SRG; docs_search for loader docs and version primers.
 - create_project generates a buildable project; build it with gradle_build (FFN picks the JDK and parses errors).
-- Prefer loader events/APIs over mixins: mixin_targets lists event hints first. When a mixin is needed,
-  look up real signatures (get_class / mixin_targets), write it with mixin_generate and check it with mixin_validate.
-- Use translate_mapping instead of guessing names across Mojmap/Yarn/Intermediary/SRG.
 - run_client mode=smoke proves the mod loads; analyze_crash explains crashes and names the culprit mod.
 - run_server needs acceptEula=true. Only pass it after the user has personally agreed to the Minecraft EULA
   (https://aka.ms/MinecraftEULA); never accept it on their behalf.

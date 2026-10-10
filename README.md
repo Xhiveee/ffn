@@ -16,8 +16,8 @@ It is designed so that **new Minecraft versions need no code changes**:
   rules. A version newer than anything verified resolves to the closest lower rules and is flagged
   `UNVERIFIED`. Users can add or override rules in a config directory — no rebuild needed.
 
-> Status: **0.4.1 (M4: `check_profiles`)**.
-> M3/M4 generated code is verified **by compilation only** (see [M3](#m3-verification-2026-10-10) / [M4 verification](#m4-verification-2026-10-10)); runtime loading is not verified.
+> Status: **0.5.0 (token economy; `generate` / `mixin_generate` removed)**.
+> FFN focuses on giving an AI agent accurate Minecraft/loader sources and APIs with small, paged outputs (see [Token economy](#token-economy)).
 
 ---
 
@@ -32,13 +32,11 @@ It is designed so that **new Minecraft versions need no code changes**:
 | `run_client` | ✅ | Starts the game client (headless via Xvfb when there is no display). `mode: "smoke"` waits for "mod loaded + main menu reached" (plus your own `waitFor` regexes), then stops and reports PASS/FAIL |
 | `run_server` | ✅ | Starts the dedicated server. **Requires `acceptEula: true`** (see [EULA](#minecraft-eula)); smoke mode waits for `Done (…)!` |
 | `analyze_crash` | ✅ | Crash report / log analysis: root exception, Mixin failures, missing/duplicate mods, class-version problems; scores the most likely culprit mod |
-| `search_mc_source` | ✅ | Class/member search (names, descriptors) and text search in sources of the exact MC version, vanilla or as seen by the project (loader patches included) |
-| `get_class` | ✅ | Members with ready-to-paste Mixin selectors, supertypes, inner classes, decompiled source (Vineflower) or the loader's sources jar |
+| `search_mc_source` | ✅ | Class/member search (names, descriptors) and text search in sources of the exact MC version, vanilla or as seen by the project (loader patches included). One line per hit, 30 per page (`offset`/`limit`), snippets clipped |
+| `get_class` | ✅ | **Outline by default**: header (super, interfaces, annotations), fields and method signatures with compact JVM descriptors (= ready Mixin selectors), no bodies; `members`/`memberFilter` filters. `method` returns just that method's source (overloads capped at 5). `detail: "full"` returns source paged by lines (300 by default) with a "more" hint. Source comes from the loader's sources jar or Vineflower |
 | `translate_mapping` | ✅ | Class/method/field names across Mojmap ↔ Yarn ↔ Intermediary ↔ SRG ↔ obfuscated (identity on unobfuscated 26.x+) |
-| `mixin_targets` | ✅ | For a target class/method: injection points read from bytecode (calls, field accesses, `new`, returns, lambdas), **loader event hints first**, and the mixin policy |
-| `mixin_generate` | ✅ | Writes a mixin (inject, redirect, modify_arg, modify_variable, modify_constant, modify_return_value, modify_expression_value, wrap_operation, wrap_with_condition, wrap_method, accessor, invoker, overwrite) with correct signatures, imports and config registration; `@At` HEAD/RETURN/TAIL/INVOKE/FIELD/NEW; validates before writing. `overwrite` is a last resort and is always flagged with a warning |
+| `mixin_targets` | ✅ | **Loader event hints first**, then the class's method selectors (paged). With `methodFilter` (≤3 matches) or `injectionPoints: true`: concise injection points from bytecode (`HEAD \| RETURN ×n \| TAIL`, INVOKE/FIELD/NEW/CONSTANT targets deduped, `maxPoints` per kind, lambdas) |
 | `mixin_validate` | ✅ | Checks mixin configs and classes against the real game classes (see below) |
-| `generate` | ✅ | Content for the project's loader + version: block (block item, blockstate, models, texture, loot, lang), item, block_entity, entity (attributes + renderer), recipe, loot_table, tag, creative_tab, event_handler, networking, config, datagen. Driven by `profiles/content/*.yaml`; every referenced class/method is checked against the project's compile classpath before writing |
 | `docs_search` | ✅ | Searches the official Fabric/Forge/NeoForge docs, the NeoForged version primers and Fabric's per-version announcements for the project's version; cached; returns snippets, code and URLs that were checked to exist |
 | `check_profiles` | ✅ | Compares the profiles with the official Fabric example mod, NeoForge/Forge MDKs, Gradle and plugin metadata, and with Minecraft releases newer than `testedUpTo`; reports outdated/unverified items and suggests user-profile YAML patches (never applied) |
 
@@ -145,35 +143,43 @@ SRG names are offered only where they are real (`m_N_` up to 1.20.x Forge).
 - handler signatures for `@Inject` (CallbackInfo vs CallbackInfoReturnable, argument lists, static), `@Redirect`, `@ModifyArg`, `@ModifyVariable`, `@ModifyReturnValue`, `@ModifyExpressionValue`, `@WrapOperation`, `@WrapWithCondition`, `@WrapMethod`;
 - `@Accessor` / `@Invoker` / `@Shadow` / `@Overwrite`, MixinExtras availability, and mixin methods that accidentally collide with a target method (a runtime "@Overwrite is required" crash).
 
-`mixin_generate` uses the same data, so the generated handler signature, `@At` target and descriptor are
-exact for the version. It refuses to write when validation finds errors (`dryRun` previews).
-
 **Event hints.** `mixin_targets` first lists loader events/APIs that cover common needs (server tick, player
 join, block break, damage, item tooltips, HUD rendering…) with the Fabric/Forge/NeoForge names. They live in
 `profiles/hints/mixin-hints.yaml`; add or override hints in `<FFN_PROFILES_DIR>/hints/*.yaml`. The policy:
 prefer events, then `@Inject`/MixinExtras wrappers, `@Redirect`/`@Overwrite` only as a last resort.
 
-## Content generation (`generate`)
+## Token economy
 
-`generate {projectDir, kind, name, params}` writes content in the style of the project's loader and Minecraft version.
-Nothing version-specific is in the engine. All of it is in **content catalogs** (`profiles/content/common.yaml`,
-`fabric.yaml`, `forge.yaml`, `neoforge.yaml`; add or override in `<FFN_PROFILES_DIR>/content/`):
+Minecraft classes are huge (decompiled `LivingEntity` ≈ 28k tokens on 1.20.1, ≈ 39k on 26.3), so every FFN tool
+returns a compact, capped answer by default and tells the agent how to get more:
 
-- **probes** check the project's real compile classpath (game jar with loader patches + loader/API jars) for a class
-  or member, e.g. `net.minecraft.world.item.Item$Properties#setId(`. Templates switch on `has.<probe>`. That is how
-  ResourceKey ids (1.21.2+), data components / `CustomPacketPayload` + `StreamCodec` (1.20.5+), `ValueInput/ValueOutput`
-  block entity saving (26.x), `Identifier` vs `ResourceLocation`, Forge EventBus 7, Fabric's renamed APIs
-  (`serverboundPlay`, `FabricCreativeModeTab`, `FabricPackOutput`) and NeoForge 26.x changes are chosen.
-- **symbols** are class aliases with candidate lists. The first one present on the classpath wins, and imports are added
-  automatically.
-- **rules** (`since:`) drive data-pack formats: recipe result keys, singular/plural data folders, ingredient style,
-  item model definitions (1.21.4+).
-- **delegate**: NeoForge 1.20.1 (a Forge 47 fork) uses the Forge templates.
+1. `get_class` → **outline** (signatures + selectors, no bodies, 200 members per page).
+2. `get_class method="hurt"` → only that method's source (add a descriptor to pick one overload).
+3. `get_class detail="full" offset=… limit=…` → raw source, 300 lines per page, only when really needed.
 
-Before writing, every class/member that the generated code references is verified on the classpath. Mismatches are
-reported and nothing is written unless `force: true`. `dryRun: true` shows the plan. Generated registration code goes into
-`registry/Mod*.java` containers, and the mod's init method gets one hook line per container (idempotent: running a kind again
-adds only what is missing; a name clash is an error).
+Other rules: results are plain text or one line of compact JSON (no pretty-printing, no duplicated
+`structuredContent`, empty fields pruned); lists are paged with `offset`/`limit` and end with
+`N more — call again with offset=…`; long messages, snippets and log tails are clipped. Per tool:
+`search_mc_source` 30 hits, `mixin_targets` 100 selectors / 25 points per kind, `docs_search` 5 results,
+`analyze_crash` and `gradle_build` 20 findings (log tail only on failure), `get_profile` / `check_profiles`
+summaries unless `verbose: true`. The server instructions tell agents: outline first, then method.
+
+Approximate tokens (characters / 4), measured with `scripts/measure-tokens.mjs` (0.4.1 → 0.5.0):
+
+| Call | 0.4.1 | 0.5.0 |
+|---|---|---|
+| `get_class` LivingEntity 1.20.1 | 42,447 (members) / 100,929 (source) | 2,426 outline page · 5,168 whole outline · 1,110 `method=hurt` |
+| `get_class` Entity 1.20.1 | 56,325 / 112,932 | 2,284 page · 6,528 whole outline |
+| `get_class` Level 1.20.1 | 24,363 / 40,877 | 3,139 outline |
+| `get_class` LivingEntity 26.3 | 59,282 / 136,965 | 2,550 page · 7,405 whole outline · 1,011 `method=hurtServer` · 4,072 first 300 source lines |
+| `get_class` Entity 26.3 | 77,002 / 153,351 | 2,163 page · 9,322 whole outline |
+| `get_class` Level 26.3 | 26,591 / 47,316 | 3,485 outline |
+| `search_mc_source` "tick" | 4,797 | 491 |
+| `mixin_targets` LivingEntity (26.3) | 49,459 | 1,583 |
+| `mixin_targets` LivingEntity `tick` | 1,551 | 136 |
+| `list_versions` | 2,044 | 282 |
+| `get_profile` | 1,126 | 243 |
+| `docs_search` | 9,008 | 1,257 |
 
 ## Docs search (`docs_search`)
 
@@ -232,9 +238,9 @@ src/
   exec/                 process runner (timeouts, process groups), Xvfb/EGL display
   diagnostics/          log/crash parser → findings + culprit
   project/              reads .ffn/project.json or infers loader/version/mappings from Gradle files
-  index/                class-file reader, mappings (ProGuard/tiny/tsrg), index store, tool jars, IndexService
-  mixin/                Java annotation parser, validator, generator, event hints
-  tools/                one file per tool group (gradle, source, mixin, crash, generate, docs, checkProfiles, …)
+  index/                class-file reader, Java method extractor (javasrc.ts), mappings (ProGuard/tiny/tsrg), index store, tool jars, IndexService
+  mixin/                Java annotation parser, validator, event hints
+  tools/                one file per tool group (gradle, source, mixin, crash, docs, checkProfiles, …); result.ts = compact output + paging
 profiles/               built-in YAML profiles (fabric/forge/neoforge.yaml) and hints/mixin-hints.yaml
 templates/              Gradle wrapper (jar + scripts) and a placeholder icon
 test/                   vitest; fixtures are real responses captured from the official endpoints
@@ -306,7 +312,6 @@ names where needed, `MixinConfigs` manifest entry, `[[mixins]]` / `fabric.mod.js
 | Same with the vanilla index for 1.20.1 and 26.3, every loader | ✅ |
 | Deliberately broken mixin (Forge 26.3): wrong method name, `@Shadow` typo, CallbackInfo on a boolean method, INVOKE the target never calls, wrong handler params, missing listed class, `JAVA_25` with Mixin 0.8.7 | ✅ each one reported |
 | Yarn project using a Mojmap name | ✅ reported with the Yarn name |
-| `mixin_generate`: 7 kinds written into Fabric 1.20.1 → compiled, validated, **applied at runtime** (smoke with `waitFor`) | ✅ |
 | `gradle_build` (JDK auto-pick; broken source → `file:line` compile error) | ✅ |
 | `run_client` smoke (Xvfb): Fabric 1.20.1 & 26.3, Forge 1.20.1 & 26.3, NeoForge 1.20.1, 1.21.1 & 26.3 (26.x via SDL EGL) | ✅ main menu reached, 16–113 s |
 | `run_server` without `acceptEula` | ✅ refused, no `eula.txt` written. The server itself was **not** started (FFN does not accept the EULA for the user) |
@@ -317,40 +322,24 @@ Reproduce with `node scripts/gen-sample.mjs <dir> <loader> <mc>` and `scripts/bu
 
 ### M3 verification (2026-10-10)
 
-Fresh projects were created for all 3 loaders on 1.20.1, 1.21.1 and 26.3. Each one then got every kind generated into it:
-
-- a block and a creative tab;
-- an item placed in that tab;
-- a ticking block entity;
-- an entity, its loot table and its renderer;
-- 3 recipes (shaped, shapeless, smelting);
-- 2 tags;
-- 5 event handlers;
-- 2 network payloads (to server, to client);
-- a config with 4 entries;
-- datagen.
-
 | Check | Result |
 |---|---|
-| `gradle_build compileJava`: Fabric, Forge, NeoForge × 1.20.1, 1.21.1, 26.3 (9 projects) | ✅ all compile |
-| `mixin_generate` modify_constant / NEW (inject, wrap_operation) / overwrite into Fabric 26.3 → compiled | ✅ |
 | `mixin_validate` on a mixin with planted CONSTANT/JUMP/LOAD/@Slice mistakes → every mistake reported | ✅ |
 | `docs_search` live against all sources (NeoForge 26.3, Fabric 1.20.1/26.3, Forge 26.3) | ✅ |
-| Runtime loading of M3 content (`run_client`) | ⚠️ **not verified.** Runtime smoke runs were dropped from M3 verification at the user's request. Three client smoke runs done earlier in development (Fabric 1.20.1, Forge 26.3, NeoForge 26.3) reached the main menu; the Forge 26.3 one found an EventBus 7 bug, which was fixed. That is not systematic coverage. |
 
 ### M4 verification (2026-10-10)
 
 | Check | Result |
 |---|---|
 | `check_profiles` live: no outdated items. Forge 26.3 MDK reference not published; Forge 1.20.1 plugin deviation reported as info | ✅ |
-| Regression: single-loader `create_project` + `generate` (block, item, recipe) on Fabric 26.3 → `gradle_build compileJava` | ✅ compiles |
+| Regression: single-loader `create_project` on Fabric 26.3 → `gradle_build compileJava` | ✅ compiles |
 | Runtime (`run_client` / `run_server`) | ⚠️ not run (compile-only verification at the user's request) |
 
 ## Development
 
 ```sh
 npm run build && npm test
-node scripts/gen-sample.mjs /tmp/ffn/forge-1.20.1 forge 1.20.1   # generate with live data
+node scripts/gen-sample.mjs /tmp/ffn/forge-1.20.1 forge 1.20.1   # create a project with live data
 JDKS=$HOME/jdks scripts/build-generated.sh /tmp/ffn/forge-1.20.1   # ./gradlew build with the right JDK
 node scripts/smoke-stdio.mjs 1.21.1                                 # talk to dist/index.js over stdio
 node scripts/call-tool.mjs mixin_validate '{"projectDir":"/tmp/ffn/forge-1.20.1"}'  # call any tool in-process
@@ -391,21 +380,16 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 
 - ~~**M1 — foundation:** live versions, profiles, `create_project`.~~ ✅
 - ~~**M2 — build, run, source & Mixin intelligence:** `gradle_build` / `run_client` / `run_server`, `analyze_crash`,
-  source index + mappings, `mixin_targets` / `mixin_validate` / `mixin_generate`.~~ ✅
-- ~~**M3 — content generators & docs:** `generate` (12 kinds, catalog-driven, classpath-verified), `docs_search`,
-  `@At` CONSTANT/JUMP/LOAD/STORE/NEW and `@Slice` checks, NEW / `@ModifyConstant` / `@Overwrite` generation.~~ ✅ (compile-verified)
+  source index + mappings, `mixin_targets` / `mixin_validate`.~~ ✅
+- ~~**M3 — docs & deeper Mixin checks:** `docs_search`, `@At` CONSTANT/JUMP/LOAD/STORE/NEW and `@Slice` checks.~~ ✅
 - ~~**M4 — profile check:** `check_profiles`.~~ ✅
-- **Next (proposal):** runtime verification of generated content, Kotlin DSL build scripts, more content kinds.
+- ~~**0.5 — token economy:** outline-first `get_class`, paging and caps everywhere; content/mixin generation removed.~~ ✅
+- **Next (proposal):** Kotlin DSL build scripts, richer source navigation (callers/usages).
 
 ### Known limitations
 
 - Text search in `search_mc_source` needs a sources jar (project index with sources, e.g. Loom/MDG); decompiled sources are per class.
-- M3 generated content is compile-verified only; runtime loading was not verified systematically.
 - `check_profiles` compares only what the references publish. For example, the Forge 1.20.1 MDK has no Gradle wrapper in `mdk/`, and newer Forge branches may not be found.
-- `generate`: the entity renderer is a `NoopRenderer` placeholder (invisible); textures are 16×16 placeholder PNGs;
-  event handlers cover 5 common events; the Forge networking kind registers one direction per message.
-  On NeoForge 26.3, `ModConfig.Type` has no COMMON/SERVER; `configType: common` maps to LOCAL and `server` maps to SYNCED.
-  That mapping is flagged UNVERIFIED. Forge configs use `ModLoadingContext.get()`, which is deprecated and gives a warning on newer Forge.
 - `docs_search`: Fabric docs pull code from `reference/` files (`@[code]` includes); those snippets show as include
   markers, not code. Forge has no 26.x docs, so the closest set (1.21.x) is used and FFN says so.
 - `@ModifyVariable` LOAD/STORE checks work by slot and type. Name checks need a local variable table, which Mojang jars do not have.
@@ -415,6 +399,7 @@ Only when a loader adopts a **new build system** (e.g. a ForgeGradle 8) does FFN
 - NeoForge 1.20.2–1.21.0: the maximum Mixin compatibility level is not verified (no warning is given).
 - A smoke test proves the mod and its mixin config load and the main menu is reached. It does not prove every injection applied; use `waitFor` for that.
 - `run_server` was only tested up to the EULA gate.
+- `get_class method=…` finds methods in the source with a lightweight brace-matching parser; overloads are matched by simple parameter type names.
 
 ---
 
@@ -438,23 +423,20 @@ Parchment и Gradle-плагинов берутся из официальных 
 с правилом `since: "<версия>"` в папку пользовательских профилей (`~/.config/ffn/profiles`, на Windows
 `%APPDATA%\ffn\profiles`, или путь из `FFN_PROFILES_DIR`) — пересобирать сервер не нужно.
 
-**Сейчас работают (0.4.1):**
+**Сейчас работают (0.5.0):**
 
 - `list_versions`, `get_profile`, `create_project`.
 - `gradle_build`, `run_client`, `run_server`: сборка и запуск с автоматическим выбором JDK, таймаутами, логами в `.ffn/logs` и разбором ошибок (файл:строка, Mixin, зависимости, версия Java).
 - `run_client` умеет работать без монитора (Xvfb). Режим `smoke` проверяет, что мод загрузился и игра дошла до главного меню, после чего останавливает её. Для 26.x на Xvfb нужен Mesa EGL (`libegl1 libegl-mesa0` или `FFN_EGL_DIR`).
 - `analyze_crash`: разбор крэш-репорта или лога с указанием мода-виновника.
 - `search_mc_source`, `get_class`, `translate_mapping`: индекс классов конкретной версии (ванильный или из проекта, с патчами загрузчика), исходники через sources jar или Vineflower, перевод имён Mojmap ↔ Yarn ↔ Intermediary ↔ SRG.
-- `mixin_targets`, `mixin_validate`, `mixin_generate`:
-  - точки инъекции берутся из байткода;
+  - `get_class` по умолчанию отдаёт **outline**: заголовок, поля и сигнатуры методов с JVM-дескрипторами (готовые селекторы для Mixin), без тел;
+  - `method="имя"` — исходник только этого метода; `detail="full"` — полный исходник постранично (по 300 строк, с подсказкой `offset=`).
+- `mixin_targets`, `mixin_validate`:
+  - точки инъекции берутся из байткода и выводятся кратко (с `methodFilter`), списки постраничные;
   - подсказки по событиям загрузчика (их можно дополнить файлами в `<FFN_PROFILES_DIR>/hints/`);
   - проверка конфигов, селекторов, `@At` и сигнатур обработчиков по реальным классам;
-  - генерация миксинов 13 видов, включая `@ModifyConstant`, инъекции в точку NEW и `@Overwrite` (последний — только в крайнем случае и всегда с предупреждением);
   - подробные проверки `@At` CONSTANT/JUMP/LOAD/STORE/NEW и `@Slice`.
-- `generate` — контент под загрузчик и версию проекта:
-  - виды: блок (с предметом, blockstate, моделями, текстурой, лутом и переводом), предмет, block entity, сущность (атрибуты и рендерер), рецепт, таблица лута, тег, вкладка творческого режима, обработчик события, сетевой пакет, конфиг, datagen;
-  - всё описано в `profiles/content/*.yaml`;
-  - перед записью каждый используемый класс и метод проверяется по classpath проекта.
 - `docs_search` — поиск по официальной документации Fabric/Forge/NeoForge, праймерам NeoForged и анонсам Fabric:
   - набор документации выбирается под версию;
   - найденное кэшируется;
@@ -465,14 +447,16 @@ Parchment и Gradle-плагинов берутся из официальных 
   - предлагает YAML-патчи для пользовательских профилей (сам ничего не применяет);
   - источники описаны в `profiles/checks/upstream.yaml`.
 
+**Экономия токенов:** все инструменты по умолчанию отвечают кратко: обычный текст или одна строка компактного JSON, списки с `offset`/`limit` и подсказкой «N more — call again with offset=…», длинные сообщения обрезаются. Порядок работы для агента: сначала outline класса, затем нужный метод, полный исходник — только если действительно нужен. Пример: `LivingEntity` 26.3 — было ≈ 59–137 тыс. токенов, стало ≈ 2,5 тыс. (страница outline) и ≈ 1 тыс. (`method=hurtServer`). Таблица замеров — в разделе [Token economy](#token-economy).
+
+`generate` и `mixin_generate` удалены в 0.5.0: FFN сосредоточен на работе с исходниками и API Minecraft и загрузчиков.
+
 **EULA Minecraft:** `run_server` **никогда не принимает EULA сам**. Он требует параметр `acceptEula: true`, а передавать его можно только после того, как **пользователь сам прочитал [EULA](https://aka.ms/MinecraftEULA) и согласился** с ним. Для `run_client` EULA не нужен.
 
 **Ограничения:**
 
 - текстовый поиск работает только с sources jar;
-- контент M3 проверен только компиляцией (9 проектов: 3 загрузчика × 1.20.1/1.21.1/26.3); загрузка в игре системно не проверялась;
-- рендерер сущности — заглушка `NoopRenderer`, текстуры — заглушки 16×16;
 - ванильный индекс не видит патчей Forge/NeoForge;
 - smoke-тест доказывает загрузку мода и выход в меню, но не применение каждой инъекции (для этого есть `waitFor`).
 
-**Дальше (предложение):** проверка сгенерированного контента в игре, Kotlin DSL, новые виды контента.
+**Дальше (предложение):** Kotlin DSL, навигация по исходникам (вызовы/использования).

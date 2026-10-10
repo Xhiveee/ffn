@@ -12,7 +12,7 @@ import { z } from "zod";
 import { LoaderSchema, type Loader } from "../profiles/schema.js";
 import { lookupProfile, type Services } from "../services.js";
 import { compareMcVersions, isReleaseVersion } from "../util/mcversion.js";
-import { guard, ok } from "./result.js";
+import { guard, okText } from "./result.js";
 
 const RefSchema = z.object({
   loader: LoaderSchema,
@@ -55,7 +55,7 @@ export function pluginBehind(resolved: string, upstream: string): boolean {
   return compareDotted(res, upCut) < 0;
 }
 
-export async function checkProfiles(services: Services, a: { loaders?: Loader[]; network?: boolean }) {
+export async function checkProfiles(services: Services, a: { loaders?: Loader[]; verbose?: boolean }) {
   const userFile = path.join(services.config.userProfilesDir, "checks", "upstream.yaml");
   const file = existsSync(userFile) ? userFile : path.join(services.config.builtinProfilesDir, "checks", "upstream.yaml");
   const upstream = UpstreamSchema.parse(YAML.parse(await readFile(file, "utf8")));
@@ -199,10 +199,13 @@ export async function checkProfiles(services: Services, a: { loaders?: Loader[];
       return `# ${path.join(services.config.userProfilesDir, `${l}-check-${today}.yaml`)}\n# Suggested by check_profiles — NOT applied. Bump testedUpTo only after a project builds on that version.\n${YAML.stringify(doc)}`;
     });
   const counts = Object.fromEntries(["outdated", "unverified", "unavailable", "ok"].map((s) => [s, findings.filter((f) => f.status === s).length]));
-  return ok(
-    `Profiles checked against ${upstream.references.filter((r) => loaders.includes(r.loader)).length} upstream reference(s) and Mojang releases (latest ${latest}): ${counts.outdated} outdated, ${counts.unverified} unverified, ${counts.unavailable} unavailable, ${counts.ok} ok.` +
-      (yaml.length ? ` Suggested profile patches are included (not applied).` : " No patches needed."),
-    { latestRelease: latest, gradleCurrent, referencesFile: file, findings, suggestedPatches: yaml },
+  const shown = a.verbose ? findings : findings.filter((f) => f.status !== "ok");
+  return okText(
+    [
+      `Profiles checked against ${upstream.references.filter((r) => loaders.includes(r.loader)).length} upstream reference(s) and Mojang releases (latest ${latest}${gradleCurrent ? `, Gradle ${gradleCurrent}` : ""}): ${counts.outdated} outdated, ${counts.unverified} unverified, ${counts.unavailable} unavailable, ${counts.ok} ok${a.verbose ? "" : " (ok items hidden; verbose=true shows them)"}.`,
+      ...shown.map((f) => `${f.status.toUpperCase()} ${f.loader}${f.mcVersion ? ` ${f.mcVersion}` : ""} ${f.item}: ${f.message}`),
+      ...(yaml.length ? ["Suggested profile patches (NOT applied):", ...yaml] : ["No patches needed."]),
+    ].join("\n"),
   );
 }
 
@@ -213,7 +216,7 @@ export function registerCheckProfiles(server: McpServer, services: Services): vo
       title: "Check profiles",
       description:
         "Compare FFN's version profiles with upstream references (official Fabric example mod, NeoForge/Forge MDKs, Gradle, plugin maven metadata — declared in profiles/checks/upstream.yaml) and with Minecraft releases newer than the profiles' testedUpTo. Reports what is outdated or unverified and returns suggested user-profile YAML patches. Never modifies profiles.",
-      inputSchema: { loaders: z.array(LoaderSchema).optional().describe("Loaders to check (default all)") },
+      inputSchema: { loaders: z.array(LoaderSchema).optional().describe("Loaders to check (default all)"), verbose: z.boolean().optional().describe("Also list items that are up to date") },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     (a) => guard(() => checkProfiles(services, a)),

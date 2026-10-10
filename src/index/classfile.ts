@@ -32,6 +32,8 @@ export interface ClassInfo {
   methods: MethodInfo[];
   signature?: string;
   sourceFile?: string;
+  /** Descriptors of class-level annotations (runtime visible and invisible). */
+  annotations?: string[];
   major: number;
 }
 
@@ -89,14 +91,55 @@ export class ClassReader {
     for (let n = this.u2(); n > 0; n--) methods.push(this.member(true));
     let signature: string | undefined;
     let sourceFile: string | undefined;
+    const annotations: string[] = [];
     for (let n = this.u2(); n > 0; n--) {
       const an = this.utf8(this.u2());
       const len = this.u4();
       if (an === "Signature") signature = this.utf8(buf.readUInt16BE(this.pos));
       else if (an === "SourceFile") sourceFile = this.utf8(buf.readUInt16BE(this.pos));
+      else if (an === "RuntimeVisibleAnnotations" || an === "RuntimeInvisibleAnnotations") {
+        try {
+          annotations.push(...this.annotationTypes(this.pos));
+        } catch {
+          /* malformed: ignore */
+        }
+      }
       this.pos += len;
     }
-    this.info = { name, access, superName, interfaces, fields, methods, signature, sourceFile, major };
+    this.info = { name, access, superName, interfaces, fields, methods, signature, sourceFile, ...(annotations.length ? { annotations } : {}), major };
+  }
+
+  /** Types of the annotations in a Runtime(In)VisibleAnnotations attribute starting at `p`. */
+  private annotationTypes(p: number): string[] {
+    const b = this.buf;
+    const out: string[] = [];
+    const skipValue = (q: number): number => {
+      const tag = String.fromCharCode(b[q]!);
+      q++;
+      if ("BCDFIJSZsc".includes(tag)) return q + 2;
+      if (tag === "e") return q + 4;
+      if (tag === "@") return skipAnn(q);
+      if (tag === "[") {
+        let n = b.readUInt16BE(q);
+        q += 2;
+        while (n-- > 0) q = skipValue(q);
+        return q;
+      }
+      throw new Error(`bad element tag ${tag}`);
+    };
+    const skipAnn = (q: number): number => {
+      let pairs = b.readUInt16BE(q + 2);
+      q += 4;
+      while (pairs-- > 0) q = skipValue(q + 2);
+      return q;
+    };
+    let n = b.readUInt16BE(p);
+    p += 2;
+    while (n-- > 0) {
+      out.push(this.utf8(b.readUInt16BE(p)));
+      p = skipAnn(p);
+    }
+    return out;
   }
 
   private u2(): number { const v = this.buf.readUInt16BE(this.pos); this.pos += 2; return v; }

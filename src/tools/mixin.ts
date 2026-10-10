@@ -9,8 +9,8 @@ import { validateProject, type MixinIssue, type ValidateContext } from "../mixin
 import { readProjectInfo } from "../project/info.js";
 import type { ResolvedProfile } from "../profiles/schema.js";
 import { lookupProfile, type Services } from "../services.js";
-import { fail, guard, ok } from "./result.js";
-import { describeIndex, indexSpecShape, toSpec } from "./source.js";
+import { fail, guard, ok, okText, page } from "./result.js";
+import { indexSpecShape, toSpec } from "./source.js";
 
 const sourceOpt = z.enum(["auto", "vanilla", "project"]).optional().describe("Class data: auto (default) = the Minecraft jar the project compiles against (exact names incl. loader patches; first call resolves it via Gradle), falling back to vanilla Minecraft; vanilla = official jars + mappings only.");
 
@@ -49,9 +49,12 @@ export const mixinValidateInput = {
 export const mixinTargetsInput = {
   ...indexSpecShape,
   targetClass: z.string(),
-  methodFilter: z.string().optional().describe("Only methods whose name contains this (or exact selector name(desc))."),
-  injectionPoints: z.boolean().optional().describe("List INVOKE/FIELD/NEW/CONSTANT targets inside the methods (default: when ≤ 8 methods match)."),
+  methodFilter: z.string().optional().describe("Only methods whose name contains this (or exact selector name(desc)). Recommended: without it you get a compact selector list only."),
+  injectionPoints: z.boolean().optional().describe("List INVOKE/FIELD/NEW/CONSTANT targets inside the methods (default: when ≤ 3 methods match)."),
+  maxPoints: z.number().int().min(1).max(500).optional().describe("Max entries per injection-point kind per method (default 25)."),
   includeSynthetic: z.boolean().optional().describe("Include synthetic methods such as lambda bodies (lambda$name$0)."),
+  offset: z.number().int().min(0).optional().describe("Paging over methods."),
+  limit: z.number().int().min(1).max(500).optional().describe("Methods per page (default 100 without injection points, 3 with)."),
 };
 
 type V = z.infer<z.ZodObject<typeof mixinValidateInput>>;
@@ -63,12 +66,15 @@ export async function mixinValidate(services: Services, a: V) {
   await suggestFromOtherMappings(services, ctx, issues, notes);
   const shown = a.includeInfo ? issues : issues.filter((i) => i.severity !== "info");
   const s = summarize(issues);
+  const m = ctx.index.meta;
   const data = {
-    project: { dir: ctx.project.dir, loader: ctx.project.loader, mcVersion: ctx.project.mcVersion, mappings: ctx.project.mappings },
-    index: describeIndex(ctx.index),
+    checkedAgainst: `Minecraft ${m.mcVersion}, ${m.namespace} names, ${m.kind === "vanilla" ? "vanilla jar" : `${m.loader ?? "project"} jar`}`,
     ...s,
-    configs,
-    issues: shown,
+    configs: configs.map((c) => ({
+      file: c.file, registered: c.registered, compatibilityLevel: c.compatibilityLevel,
+      mixins: c.mixins.map((x) => `${x.name} [${x.section}]${x.errors ? ` ${x.errors} error(s)` : ""}${x.warnings ? ` ${x.warnings} warning(s)` : ""}`),
+    })),
+    issues: shown.map((i) => ({ ...i, missing: undefined })),
     notes,
   };
   const head = s.errors ? `Mixin validation FAILED: ${s.errors} error(s), ${s.warnings} warning(s).` : `Mixin validation passed (${configs.reduce((n, c) => n + c.mixins.length, 0)} mixin(s) checked${s.warnings ? `, ${s.warnings} warning(s)` : ""}).`;
@@ -105,49 +111,56 @@ async function suggestFromOtherMappings(services: Services, ctx: ValidateContext
 }
 
 export async function mixinTargets(services: Services, a: T) {
-  const { index, notes, project } = await services.indexes.open(toSpec(a));
+  const { index, project } = await services.indexes.open(toSpec(a));
   const found = index.resolve(a.targetClass);
   if (found.length !== 1) return fail(found.length ? `Ambiguous: ${found.map((f) => f.replace(/\//g, ".")).join(", ")}` : `Class ${a.targetClass} not found in Minecraft ${index.meta.mcVersion} (${index.meta.namespace}).`);
   const name = found[0]!;
   const cls = index.get(name)!;
   const f = a.methodFilter;
-  const methods = cls.m.filter(([n, d, acc]) => (a.includeSynthetic || !(acc & ACC.SYNTHETIC)) && (!f || (f.includes("(") ? `${n}${d}` === f : n.toLowerCase().includes(f.toLowerCase()))));
-  const withPoints = a.injectionPoints ?? methods.length <= 8;
+  const methods = cls.m.filter(([n, d, acc]) => (a.includeSynthetic || !(acc & ACC.SYNTHETIC)) && n !== "<clinit>" && (!f || (f.includes("(") ? `${n}${d}` === f : n.toLowerCase().includes(f.toLowerCase()))));
+  const withPoints = a.injectionPoints ?? methods.length <= 3;
+  const pg = page(methods, a.offset ?? 0, a.limit ?? (withPoints ? 3 : 100));
   const reader = withPoints ? index.reader(name) : undefined;
-  const out = methods.map(([n, d, acc]) => {
-    const entry: Record<string, unknown> = {
-      name: n, descriptor: d, signature: methodToJava(n, d, name), static: !!(acc & ACC.STATIC), selector: `${n}${d}`,
-      ...(acc & ACC.ABSTRACT ? { note: "abstract — no body to inject into; target an implementation" } : {}),
-    };
-    if (reader && !(acc & ACC.ABSTRACT)) {
-      const m = reader.info.methods.find((x) => x.name === n && x.desc === d);
-      if (m) {
-        const r = reader.analyze(m);
-        entry.injectionPoints = {
-          simple: ["HEAD", r.returns ? `RETURN (${r.returns} return instruction${r.returns > 1 ? "s" : ""})` : undefined, "TAIL"].filter(Boolean),
-          INVOKE: r.invokes.map((i) => `L${i.owner};${i.name}${i.desc}`),
-          FIELD: r.fields.map((x) => `L${x.owner};${x.name}:${x.desc} (${x.opcode})`),
-          NEW: r.news.map((x) => `L${x};`),
-          CONSTANT: [...new Set(r.typedConstants.map((c) => `${c.type}:${c.type === "string" ? JSON.stringify(c.value) : c.value}`))].slice(0, 40),
-          JUMP: r.jumpOps.length ? `${r.jumpOps.length} jump instruction(s)` : undefined,
-        };
-        const lambdas = cls.m.filter(([ln, , la]) => la & ACC.SYNTHETIC && ln.startsWith(`lambda$${n.replace(/[<>]/g, "")}$`)).map(([ln, ld]) => ln + ld);
-        if (lambdas.length) entry.lambdas = lambdas;
-      }
-    }
-    return entry;
-  });
+  const max = a.maxPoints ?? 25;
+  const list = (label: string, xs: string[]) => {
+    if (!xs.length) return [];
+    const counts = new Map<string, number>();
+    for (const x of xs) counts.set(x, (counts.get(x) ?? 0) + 1);
+    const uniq = [...counts].map(([x, n]) => (n > 1 ? `${x} ×${n}` : x));
+    return [`  ${label} (${uniq.length}):`, ...uniq.slice(0, max).map((x) => `    ${x}`), ...(uniq.length > max ? [`    … ${uniq.length - max} more (maxPoints)`] : [])];
+  };
+  const out: string[] = [];
+  for (const [n, d, acc] of pg.items) {
+    const flags = [acc & ACC.STATIC ? "static" : "", acc & ACC.ABSTRACT ? "abstract — no body; target an implementation" : ""].filter(Boolean).join(", ");
+    out.push(`${n}${d}${flags ? `  [${flags}]` : ""}`);
+    if (!reader || acc & ACC.ABSTRACT) continue;
+    const m = reader.info.methods.find((x) => x.name === n && x.desc === d);
+    if (!m) continue;
+    const r = reader.analyze(m);
+    out.push(`  HEAD | ${r.returns ? `RETURN ×${r.returns}` : "no RETURN"} | TAIL${r.jumpOps.length ? ` | JUMP ×${r.jumpOps.length}` : ""}`);
+    out.push(...list("INVOKE", r.invokes.map((i) => `L${i.owner};${i.name}${i.desc}`)));
+    out.push(...list("FIELD", r.fields.map((x) => `L${x.owner};${x.name}:${x.desc} ${x.opcode}`)));
+    out.push(...list("NEW", r.news.map((x) => `L${x};`)));
+    out.push(...list("CONSTANT", r.typedConstants.map((c) => `${c.type}:${c.type === "string" ? JSON.stringify(c.value) : c.value}`)));
+    const lambdas = cls.m.filter(([ln, , la]) => la & ACC.SYNTHETIC && ln.startsWith(`lambda$${n.replace(/[<>]/g, "")}$`)).map(([ln, ld]) => ln + ld);
+    if (lambdas.length) out.push(`  lambdas: ${lambdas.join(", ")}`);
+  }
   const hints = matchHints(await loadHints(services.config), name, f && !f.includes("(") ? methods[0]?.[0] : undefined, project?.loader ?? a.loader);
-  return ok(`${name.replace(/\//g, ".")}: ${out.length} method(s)${f ? ` matching "${f}"` : ""} in Minecraft ${index.meta.mcVersion} (${index.meta.namespace}).${hints.length ? " A loader event may cover this — see hints." : ""}`, {
-    index: describeIndex(index),
-    class: name.replace(/\//g, "."),
-    mixinTarget: `@Mixin(${name.slice(name.lastIndexOf("/") + 1).replace(/\$/g, ".")}.class)`,
-    clientOnly: /^(net\/minecraft\/client\/|com\/mojang\/blaze3d\/)/.test(name),
-    methods: out,
-    hints,
-    policy: MIXIN_POLICY,
-    notes,
+  const hintLines = hints.map((h) => {
+    const loaders = Object.entries(h).filter(([k, v]) => ["fabric", "forge", "neoforge"].includes(k) && v);
+    return `hint: ${h.use} → ${loaders.map(([k, v]) => `${k}: ${v}`).join("; ") || "a loader event"}`;
   });
+  const simpleName = name.slice(name.lastIndexOf("/") + 1).replace(/\$/g, ".");
+  const head = `${name.replace(/\//g, ".")} — ${pg.total} method(s)${f ? ` matching "${f}"` : ""}, showing ${pg.items.length} (Minecraft ${index.meta.mcVersion}, ${index.meta.namespace}). @Mixin(${simpleName}.class)${/^(net\/minecraft\/client\/|com\/mojang\/blaze3d\/)/.test(name) ? " — client-only: register in \"client\"" : ""}`;
+  return okText(
+    [
+      head,
+      ...(hintLines.length ? [...hintLines, `policy: ${MIXIN_POLICY}`] : []),
+      ...out,
+      ...(pg.more ? [`… ${pg.more}`] : []),
+      ...(!withPoints ? ["Pass methodFilter (≤3 matches) or injectionPoints=true for INVOKE/FIELD/NEW/CONSTANT targets."] : []),
+    ].join("\n"),
+  );
 }
 
 export function registerMixinTools(server: McpServer, services: Services): void {

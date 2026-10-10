@@ -22,6 +22,11 @@ afterAll(async () => {
 
 const text = (r: Awaited<ReturnType<Client["callTool"]>>) => (r.content as { type: string; text: string }[])[0]!.text;
 
+function json(r: unknown): unknown {
+  const t = text(r as never);
+  return JSON.parse(t.trimEnd().split("\n").at(-1)!);
+}
+
 describe("MCP server", () => {
   it("registers all tools", async () => {
     const { tools } = await client.listTools();
@@ -53,15 +58,15 @@ describe("MCP server", () => {
   it("list_versions returns releases with loader availability", async () => {
     const r = await client.callTool({ name: "list_versions", arguments: {} });
     expect(r.isError).toBeFalsy();
-    const data = r.structuredContent as { latest: { release: string }; versions: { id: string; loaders: string[] }[] };
-    expect(data.latest.release).toBe("26.3");
-    expect(data.versions.at(-1)!.id).toBe("1.20.1");
-    expect(data.versions.find((v) => v.id === "1.20.1")!.loaders).toEqual(["forge", "fabric", "neoforge"]);
+    const t = text(r);
+    expect(t).toMatch(/^Latest release 26\.3,/);
+    const lines = t.split("\n");
+    expect(lines.at(-1)).toMatch(/^1\.20\.1 \d{4}-\d\d-\d\d: forge fabric neoforge$/);
   });
 
   it("list_versions with mcVersion returns per-loader details", async () => {
     const r = await client.callTool({ name: "list_versions", arguments: { mcVersion: "1.20.1" } });
-    const data = r.structuredContent as Record<string, any>;
+    const data = json(r) as Record<string, any>;
     expect(data.java).toBe(17);
     expect(data.loaders.forge.versions.recommended).toBe("47.4.10");
     expect(data.loaders.fabric.versions.fabricApi).toBe("0.92.12+1.20.1");

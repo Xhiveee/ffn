@@ -9,7 +9,7 @@ import { runProcess, type RunResult } from "../exec/run.js";
 import { discoverJdks, pickJdk, type JdkInfo } from "../jdk/discover.js";
 import { readProjectInfo, type ProjectInfo } from "../project/info.js";
 import { lookupProfile, type Services } from "../services.js";
-import { fail, guard, ok } from "./result.js";
+import { clip, fail, guard, ok } from "./result.js";
 
 const INIT_SCRIPT = `// Written by FFN. Adds JVM/program arguments to run tasks from environment variables.
 def ffnJvm = System.getenv("FFN_RUN_JVM_ARGS")
@@ -137,22 +137,21 @@ function status(r: RunResult): string {
 
 function report(run: GradleRun, extra: Record<string, unknown> = {}) {
   const r = run.result;
+  const failed = r.exitCode !== 0 || r.timedOut;
+  const errs = run.diagnosis.findings.filter((f) => f.severity === "error");
+  const findings = [...errs, ...run.diagnosis.findings.filter((f) => f.severity !== "error")];
   return {
-    projectDir: run.project.dir,
-    project: { loader: run.project.loader, mcVersion: run.project.mcVersion, mappings: run.project.mappings, modId: run.project.modId },
-    jdk: { home: run.jdk.home, major: run.jdk.major, required: run.requiredJvm },
-    command: run.command,
+    jdk: `${run.jdk.major} (required ${run.requiredJvm}+)`,
     status: status(r),
-    exitCode: r.exitCode,
-    timedOut: r.timedOut,
     durationSec: Math.round(r.durationMs / 100) / 10,
     logFile: r.logFile,
     ...extra,
-    summary: run.diagnosis.summary,
-    findings: run.diagnosis.findings.slice(0, 40),
+    findings: findings.slice(0, 20).map((f) => ({ ...f, message: clip(f.message, 300), evidence: f.evidence && f.evidence !== f.message ? clip(f.evidence, 200) : undefined })),
+    ...(findings.length > 20 ? { moreFindings: `${findings.length - 20} more in the log (analyze_crash path=<logFile> offset=20)` } : {}),
     culprit: run.diagnosis.culprit,
     warnings: run.warnings,
-    tail: r.tail.slice(-40),
+    // the log tail only when it can help: failures without recognised findings get more lines
+    ...(failed ? { tail: r.tail.slice(errs.length ? -10 : -30).map((l) => clip(l, 200)) } : {}),
   };
 }
 

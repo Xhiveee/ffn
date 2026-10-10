@@ -5,13 +5,15 @@ import path from "node:path";
 import { z } from "zod";
 import { diagnose } from "../diagnostics/parse.js";
 import type { Services } from "../services.js";
-import { fail, guard, ok } from "./result.js";
+import { clip, fail, guard, ok } from "./result.js";
 
 export const analyzeCrashInput = {
   log: z.string().optional().describe("Pasted crash report, latest.log/debug.log excerpt or Gradle output."),
   path: z.string().optional().describe("Path to a crash report or log file."),
   projectDir: z.string().optional().describe("Use the newest crash report (else logs/latest.log) in the project's run directory."),
   runDir: z.string().optional().describe('Run directory relative to projectDir (default "run").'),
+  limit: z.number().int().min(1).max(200).optional().describe("Findings per page (default 20, errors first)."),
+  offset: z.number().int().min(0).optional().describe("Skip this many findings (paging)."),
 };
 type A = z.infer<z.ZodObject<typeof analyzeCrashInput>>;
 
@@ -48,7 +50,10 @@ export async function analyzeCrash(_services: Services, a: A) {
     description: d.description,
     rootException: d.rootException,
     culprit: d.culprit,
-    findings: [...errors, ...d.findings.filter((f) => f.severity !== "error")].slice(0, 60),
+    findings: [...errors, ...d.findings.filter((f) => f.severity !== "error")]
+      .slice(a.offset ?? 0, (a.offset ?? 0) + (a.limit ?? 20))
+      .map((f) => ({ ...f, message: clip(f.message, 300), evidence: f.evidence && f.evidence !== f.message ? clip(f.evidence, 200) : undefined })),
+    ...(d.findings.length > (a.offset ?? 0) + (a.limit ?? 20) ? { more: `${d.findings.length - (a.offset ?? 0) - (a.limit ?? 20)} more finding(s): offset=${(a.offset ?? 0) + (a.limit ?? 20)}` } : {}),
     nextSteps: [
       ...(d.findings.some((f) => f.kind === "mixin_error") ? ["Run mixin_validate on the project to locate the bad injection statically."] : []),
       ...(d.findings.some((f) => f.kind === "compile_error") ? ["Use get_class / search_mc_source to find the current names for this version."] : []),

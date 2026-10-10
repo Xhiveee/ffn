@@ -5,7 +5,7 @@ import { readProjectInfo } from "../project/info.js";
 import { LoaderSchema, type Loader } from "../profiles/schema.js";
 import type { Services } from "../services.js";
 import { compareMcVersions, parseMcVersion } from "../util/mcversion.js";
-import { fail, guard, ok } from "./result.js";
+import { fail, guard, okText } from "./result.js";
 
 export const docsSearchInput = {
   query: z.string().min(2).describe("What to look for, e.g. 'register a block entity renderer', 'data components', 'CustomPacketPayload'"),
@@ -16,7 +16,7 @@ export const docsSearchInput = {
     .array(z.enum(["docs", "primer", "changelog"]))
     .optional()
     .describe("docs (loader documentation), primer (NeoForged version primers: vanilla + loader changes per version, useful for porting), changelog (Fabric per-version announcements). Default: all"),
-  limit: z.number().int().min(1).max(25).optional().describe("Max results (default 8)"),
+  limit: z.number().int().min(1).max(25).optional().describe("Max results (default 5)"),
   includeCode: z.boolean().optional().describe("Include the first code block of each matching section (default true)"),
   verifyUrls: z.boolean().optional().describe("Check that every returned page URL responds (default true)"),
 };
@@ -83,7 +83,7 @@ export async function docsSearch(services: Services, a: Args) {
   if (!inScope.size) return fail(`No documentation could be loaded.${warnings.length ? ` ${warnings.join(" ")}` : ""}`);
 
   // --- rank
-  const limit = a.limit ?? 8;
+  const limit = a.limit ?? 5;
   const hits = rank([...inScope], a.query, (p) => (boostOf.get(p) ?? 1) * (p.kind === "docs" ? 1 : 0.8));
   const seen = new Set<string>();
   const top = [];
@@ -119,8 +119,8 @@ export async function docsSearch(services: Services, a: Args) {
         verified,
         repoPath: h.page.repoPath,
         score: Math.round(h.score * 100) / 100,
-        snippet: snippet(h.section.text, a.query),
-        code: code ? (code.length > 900 ? `${code.slice(0, 900)}\n…` : code) : undefined,
+        snippet: snippet(h.section.text, a.query, 240),
+        code: code ? (code.length > 500 ? `${code.slice(0, 500)}\n…` : code) : undefined,
       };
     }),
   );
@@ -139,7 +139,7 @@ export async function docsSearch(services: Services, a: Args) {
     "",
     ...lines,
   ].join("\n");
-  return ok(summary, { query: a.query, loader, mcVersion: mc, searched: used, notes, warnings, results });
+  return okText(summary);
 }
 
 export function registerDocsTools(server: McpServer, services: Services): void {

@@ -4,7 +4,7 @@ import { lookupProfile, type Services } from "../services.js";
 import { Notes } from "../sources/index.js";
 import { LOADERS, type Loader } from "../profiles/schema.js";
 import { compareMcVersions } from "../util/mcversion.js";
-import { guard, ok } from "./result.js";
+import { guard, ok, okText } from "./result.js";
 
 export const listVersionsInput = {
   mcVersion: z
@@ -38,18 +38,13 @@ export async function listVersions(services: Services, args: { mcVersion?: strin
       .filter((x) => (args.includeSnapshots ? x.type === "release" || x.type === "snapshot" : x.type === "release"))
       .filter((x) => args.includeUnsupported || !minEntry || x.releaseTime >= minEntry.releaseTime)
       .slice(0, args.limit ?? 60)
-      .map((x) => ({ id: x.id, type: x.type, releaseTime: x.releaseTime, ...(avail ? { loaders: avail(x.id) } : {}) }));
-    const data = {
-      latest: manifest.latest,
-      minimumSupported: minVersion,
-      count: list.length,
-      versions: list,
-      warnings: notes.warnings,
-      sources: [...notes.sources],
-    };
-    return ok(
-      `Latest release: ${manifest.latest.release}, latest snapshot: ${manifest.latest.snapshot}. ${list.length} versions listed (newest first). Call list_versions with mcVersion for loader details.`,
-      data,
+      .map((x) => `${x.id}${x.type !== "release" ? ` (${x.type})` : ""} ${x.releaseTime.slice(0, 10)}${avail ? `: ${avail(x.id).join(" ") || "no loaders yet"}` : ""}`);
+    return okText(
+      [
+        `Latest release ${manifest.latest.release}, latest snapshot ${manifest.latest.snapshot}; FFN supports ${minVersion}+. ${list.length} version(s), newest first (version date: loaders with builds). list_versions mcVersion=<v> gives loader/API/plugin versions.`,
+        ...list,
+        ...notes.warnings.map((w) => `warning: ${w}`),
+      ].join("\n"),
     );
   }
 
@@ -111,7 +106,6 @@ export async function listVersions(services: Services, args: { mcVersion?: strin
     parchment: typeof parchment === "string" ? parchment : null,
     loaders,
     warnings: notes.warnings,
-    sources: [...notes.sources],
   };
   const avail = LOADERS.filter((l) => {
     const x = loaders[l] as { versions: { available?: boolean } };
