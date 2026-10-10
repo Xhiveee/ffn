@@ -57,6 +57,7 @@ rules:
 
   - since: "1.20.2"
     description: ForgeGradle 6 (official Forge MDK), Mojang mappings only
+    verified: ["1.20.4"]
     set:
       gradle: { version: "8.12.1" }
       buildSystem: forgegradle6
@@ -75,6 +76,7 @@ rules:
         annotationProcessor: org.spongepowered:mixin:0.8.5:processor
         mixinGradle: { id: org.spongepowered.mixin, version: "0.7.+" }
       packMeta: { kind: pack_format, format: 18 }
+      reobfJar: true
       references:
         - https://maven.minecraftforge.net/net/minecraftforge/forge/ (forge-<mc>-<ver>-mdk.zip)
       notes: []
@@ -92,8 +94,10 @@ rules:
   - { since: "1.21.9", set: { packMeta: { kind: min_max, format: 69 } } }
 
   - since: "1.20.6"
-    description: Forge runs on Mojang names from 1.20.6 — no refmap needed
+    description: Forge runs on Mojang names from 1.20.6 — no refmap, no reobfJar
+    verified: ["1.21.1"]
     set:
+      reobfJar: false
       mixin:
         refmap: false
         mixinGradle: null

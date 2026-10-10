@@ -157,6 +157,16 @@ describe("create_project: Forge", () => {
     expect(build).toContain("mappings channel: 'official', version: minecraft_version");
     expect(build).toContain('arg "-mixin.config=${mod_id}.mixins.json"');
     expect(build).not.toContain("org.spongepowered.mixin");
+    expect(build).not.toContain("reobfJar"); // Mojang names at runtime since 1.20.6
+  });
+
+  it("1.20.4: ForgeGradle 6 with MixinGradle refmap and reobfJar", async () => {
+    const g = await generate({ loader: "forge", mcVersion: "1.20.4" });
+    const build = g.read("build.gradle");
+    expect(build).toContain("id 'org.spongepowered.mixin' version '0.7.+'");
+    expect(build).toContain("finalizedBy 'reobfJar'");
+    expect(g.read("settings.gradle")).toContain("repo.spongepowered.org");
+    expect(JSON.parse(g.read("src/main/resources/testmod.mixins.json")).refmap).toBe("testmod.refmap.json");
   });
 });
 

@@ -531,8 +531,7 @@ tasks.named('jar', Jar).configure {
                 'MixinConfigs'          : "\${mod_id}.mixins.json"
         ])
     }
-    finalizedBy 'reobfJar'
-}
+${profile.reobfJar ? "    finalizedBy 'reobfJar'\n" : ""}}
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'

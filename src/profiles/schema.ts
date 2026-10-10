@@ -105,6 +105,8 @@ export const ProfileFieldsSchema = z
     mappings: z.object({ default: MappingsSchema, supported: z.array(MappingsSchema).min(1) }).strict(),
     mixin: MixinSchema,
     packMeta: PackMetaSchema,
+    /** ForgeGradle: production jar must be reobfuscated to SRG (true until Forge moved to Mojang names at runtime in 1.20.6). */
+    reobfJar: z.boolean().default(false),
     sampleMixin: z.partialRecord(MappingsSchema, SampleMixinSchema),
     references: z.array(z.string()),
     notes: z.array(z.string()),
@@ -124,6 +126,7 @@ const PartialFields = z
     mappings: z.object({ default: MappingsSchema, supported: z.array(MappingsSchema).min(1) }).partial().strict().optional(),
     mixin: MixinSchema.extend({ mixinExtras: MixinSchema.shape.mixinExtras.partial().strict() }).partial().strict().optional(),
     packMeta: PackMetaSchema.partial().strict().optional(),
+    reobfJar: z.boolean().optional(),
     sampleMixin: z.partialRecord(MappingsSchema, SampleMixinSchema.partial().strict()).optional(),
     references: z.array(z.string()).optional(),
     notes: z.array(z.string()).optional(),

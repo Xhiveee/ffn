@@ -143,6 +143,38 @@ against, so a maintainer can diff when a new version ships.
 | NeoForge | 1.20.2 – 1.20.4 | ModDevGradle | `META-INF/mods.toml` | `[[mixins]]` |
 | NeoForge | 1.20.5+ | ModDevGradle | `META-INF/neoforge.mods.toml` | `[[mixins]]` |
 
+### Build verification
+
+Generated projects were built with `./gradlew build` on 2026-10-10 (live versions of that day,
+Temurin JDK 17/21/25). All produced a jar; the Mixin wiring was checked inside the jars (refmap with SRG
+names where needed, `MixinConfigs` manifest entry, `[[mixins]]` / `fabric.mod.json` registration).
+
+| Project | Result | Notes |
+|---|---|---|
+| Fabric 1.20.1 (Mojmap) | ✅ | Loom 1.18.4 — Gradle must run on JDK 25 |
+| Fabric 1.20.1 (Yarn) | ✅ | |
+| Fabric 1.21.1 | ✅ | |
+| Fabric 26.3 | ✅ | non-remapping Loom, Java 25 |
+| Forge 1.20.1 | ✅ | MDG legacyforge, refmap `m_130006_` |
+| Forge 1.20.4 | ✅ | ForgeGradle 6 + MixinGradle, refmap |
+| Forge 1.21.1 | ✅ | ForgeGradle 6, no reobf |
+| Forge 26.3 | ✅ | ForgeGradle 7 |
+| NeoForge 1.20.1 | ✅ | `net.neoforged:forge` 1.20.1-47.1.106 via MDG legacyforge |
+| NeoForge 1.21.1 | ✅ | |
+| NeoForge 26.3 | ✅ | beta build 26.3.0.65-beta (no stable yet) |
+
+Not verified yet: launching the game (`runClient`/`runServer`) to confirm the example mixin applies at runtime.
+Reproduce with `node scripts/gen-sample.mjs <dir> <loader> <mc>` and `scripts/build-generated.sh <dir>`.
+
+## Development
+
+```sh
+npm run build && npm test
+node scripts/gen-sample.mjs /tmp/ffn/forge-1.20.1 forge 1.20.1   # generate with live data
+JDKS=$HOME/jdks scripts/build-generated.sh /tmp/ffn/forge-1.20.1   # ./gradlew build with the right JDK
+node scripts/smoke-stdio.mjs 1.21.1                                 # talk to dist/index.js over stdio
+```
+
 ## Adding a profile for a new Minecraft version
 
 Usually **nothing is needed**: a new release is picked up from Mojang's manifest, Java and obfuscation are
