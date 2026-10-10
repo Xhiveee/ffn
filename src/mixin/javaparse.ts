@@ -1,9 +1,10 @@
 /**
- * Lightweight Java parsing for Mixin classes: enough structure (package, imports, @Mixin, member
- * annotations with their element values, declarations) to validate against the class index.
- * Not a full Java parser; it is tolerant and reports what it could not understand.
+ * Java parsing for Mixin classes: package, imports, @Mixin, member annotations with their element
+ * values, declarations. parseJava uses a real Java parser (javacst.ts); on a syntax error it falls
+ * back to the tolerant scanner below and says so, so a half-written file still gets checked.
  */
 import { javaToDesc } from "../index/classfile.js";
+import { parseJavaCst } from "./javacst.js";
 
 export type AnnValue =
   | { t: "str"; v: string }
@@ -235,6 +236,18 @@ function skipBalanced(s: string, i: number, open: string, close: string): number
 }
 
 export function parseJava(source: string): ParsedJava {
+  try {
+    return parseJavaCst(source);
+  } catch (e) {
+    const p = parseJavaTolerant(source);
+    const msg = (e as Error).message.split("\n")[0]!.slice(0, 200);
+    p.problems.unshift(`Java syntax error (${msg}); checked with the tolerant fallback parser.`);
+    return p;
+  }
+}
+
+/** Tolerant regex/scanner parser: used only when the source does not parse as Java. */
+export function parseJavaTolerant(source: string): ParsedJava {
   const s = stripComments(source);
   const problems: string[] = [];
   const pkg = /\bpackage\s+([\w.]+)\s*;/.exec(s)?.[1] ?? "";

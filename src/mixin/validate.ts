@@ -177,6 +177,15 @@ function opcodeOf(v: Annotation["args"][string] | undefined): number | undefined
   if (v.t === "ident") return JUMP_OPCODES[v.v.replace(/^.*\./, "")];
   return undefined;
 }
+const LOCAL_REFS: Record<string, string> = { LocalBooleanRef: "Z", LocalByteRef: "B", LocalCharRef: "C", LocalShortRef: "S", LocalIntRef: "I", LocalLongRef: "J", LocalFloatRef: "F", LocalDoubleRef: "D" };
+/** Descriptor wrapped by a MixinExtras LocalRef type (object LocalRef<T> → "?" = unknown here, checked by type text). */
+function localRefDesc(type: string): string | undefined {
+  const simpleName = type.replace(/<.*$/, "").replace(/^.*\./, "");
+  if (LOCAL_REFS[simpleName]) return LOCAL_REFS[simpleName];
+  if (simpleName === "LocalRef") return "?";
+  return undefined;
+}
+
 /** Local variable category used by xLOAD/xSTORE for a type descriptor. */
 export const localCategory = (d: string): "I" | "J" | "F" | "D" | "A" => (/^[ZBCSI]$/.test(d) ? "I" : d === "J" ? "J" : d === "F" ? "F" : d === "D" ? "D" : "A");
 
@@ -325,6 +334,7 @@ export class MixinValidator {
         }
         if (a.name === "ModifyConstant") this.checkModifyConstant(p, m, a, matched, push);
         if (a.name === "ModifyVariable") this.checkLocals(p, m, a, ats, matched, push);
+        this.checkLocalParams(p, m, a, matched, push);
         this.checkSlices(a, ats, matched, m.name, push);
         this.checkHandler(p, m, a, matched, invoked[0], push);
       } else if (a.name === "Accessor" || a.name === "Invoker") {
@@ -568,8 +578,12 @@ export class MixinValidator {
       if (index !== undefined && !idx.includes(index)) push({ severity: "error", message: `${tl}: index = ${index} is not a ${cat}-type local used there; indices: ${idx.join(", ")}.` });
       if (names.length) {
         const lvt = mi?.localVariables ?? [];
-        if (!lvt.length) push({ severity: "warning", message: `${tl}: name = ${names.join("/")} cannot be checked — this jar has no local variable table (names are only available in dev with LVT); use ordinal or index.` });
-        else if (!names.some((n) => lvt.some((v) => v.name === n))) push({ severity: "error", message: `${tl}: no local named ${names.join("/")}. Locals of that type: ${lvt.filter((v) => localCategory(v.desc) === cat).map((v) => v.name).join(", ") || "none"}.` });
+        if (!lvt.length) push({ severity: "info", message: `${tl}: name = ${names.join("/")} is unverifiable here — the indexed jar has no local variable table (Mojang jars strip it; Parchment/Yarn dev jars have one: use source=project). Prefer ordinal.` });
+        else {
+          const hit = lvt.filter((v) => names.includes(v.name));
+          if (!hit.length) push({ severity: "error", message: `${tl}: no local named ${names.join("/")}. Locals of that type: ${lvt.filter((v) => localCategory(v.desc) === cat).map((v) => v.name).join(", ") || "none"}.` });
+          else if (!hit.some((v) => v.desc === p0)) push({ severity: "error", message: `${tl}: local ${hit[0]!.name} is ${hit[0]!.desc}, handler takes ${p0}.` });
+        }
       }
       if (ordinal !== undefined) {
         const firstLocal = (t.access & ACC.STATIC ? 0 : 1) + parseMethodDesc(t.desc).params.reduce((n, d) => n + (d === "J" || d === "D" ? 2 : 1), 0);
@@ -578,6 +592,57 @@ export class MixinValidator {
       }
       if (index === undefined && ordinal === undefined && !names.length && idx.length > 1)
         push({ severity: "warning", message: `${tl}: ${idx.length} ${cat}-type locals (slots ${idx.join(", ")}) — implicit selection fails when more than one is in scope; set ordinal, index or name.` });
+    }
+  }
+
+  /** MixinExtras @Local handler parameters: checked against the LVT when the jar has one, else by slot types. */
+  private checkLocalParams(p: ParsedJava, m: ParsedMember, a: Annotation, methods: TargetMethod[], push: (i: MixinIssue) => void): void {
+    for (const prm of m.params) {
+      const loc = prm.annotations.find((q) => q.name === "Local");
+      if (!loc) continue;
+      let desc = localRefDesc(prm.type) ?? this.typeDesc(p, prm.type);
+      if (desc === "?") desc = this.typeDesc(p, /<(.+)>/.exec(prm.type)?.[1] ?? "");
+      if (!desc || desc === "?") continue;
+      const label = `@${a.name} ${m.name}: @Local ${prm.name}`;
+      const names = strsOf(loc.args.name);
+      const ordinal = numOf(loc.args.ordinal);
+      const index = numOf(loc.args.index);
+      for (const t of methods) {
+        const tl = methods.length > 1 ? `${label} (${t.name}${t.desc})` : label;
+        if (boolOf(loc.args.argsOnly)) {
+          if (!parseMethodDesc(t.desc).params.includes(desc)) push({ severity: "error", message: `${tl}: argsOnly=true but the target has no ${desc} parameter.` });
+          continue;
+        }
+        const r = this.ctx.index.reader(t.owner);
+        const mi = r?.info.methods.find((x) => x.name === t.name && x.desc === t.desc);
+        if (!mi) continue;
+        const lvt = mi.localVariables ?? [];
+        if (lvt.length) {
+          const same = lvt.filter((v) => v.desc === desc);
+          const distinct = [...new Map(same.map((v) => [`${v.index}:${v.name}`, v])).values()];
+          if (names.length) {
+            if (!same.some((v) => names.includes(v.name))) {
+              const byName = lvt.find((v) => names.includes(v.name));
+              push({ severity: "error", message: byName ? `${tl}: local ${byName.name} is ${byName.desc}, parameter is ${desc}.` : `${tl}: no ${desc} local named ${names.join("/")}; ${desc} locals: ${distinct.map((v) => v.name).join(", ") || "none"}.` });
+            }
+          } else if (index !== undefined) {
+            if (!same.some((v) => v.index === index)) push({ severity: "error", message: `${tl}: no ${desc} local in slot ${index}; slots: ${distinct.map((v) => `${v.index} (${v.name})`).join(", ") || "none"}.` });
+          } else if (!distinct.length) {
+            push({ severity: "error", message: `${tl}: the target has no ${desc} local variable.` });
+          } else if (ordinal !== undefined && ordinal >= distinct.length) {
+            push({ severity: "error", message: `${tl}: ordinal = ${ordinal} but the target has only ${distinct.length} ${desc} local(s): ${distinct.map((v) => v.name).join(", ")}.` });
+          } else if (ordinal === undefined && distinct.length > 1) {
+            push({ severity: "warning", message: `${tl}: ${distinct.length} ${desc} locals (${distinct.map((v) => v.name).join(", ")}) — implicit selection fails if more than one is in scope at the injection point; set ordinal or name.` });
+          }
+        } else {
+          if (names.length) push({ severity: "info", message: `${tl}: name = ${names.join("/")} is unverifiable — the indexed jar has no local variable table (Mojang jars strip it; Parchment/Yarn dev jars have one: use source=project). Prefer ordinal.` });
+          const refs = r!.analyze(mi);
+          const cat = localCategory(desc);
+          const slots = [...new Set(refs.locals.filter((l) => l.type === cat).map((l) => l.index))];
+          if (!slots.length) push({ severity: "error", message: `${tl}: the target uses no ${cat}-type local variable.` });
+          else if (!names.length && index === undefined && ordinal === undefined && slots.length > 1) push({ severity: "info", message: `${tl}: ${slots.length} ${cat}-type local slots and no LVT to tell them apart — set ordinal (unverifiable here).` });
+        }
+      }
     }
   }
 
