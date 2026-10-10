@@ -1,0 +1,137 @@
+Starting a Gradle Daemon (subsequent builds will be faster)
+> Task :compileJava FAILED
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:5: error: cannot find symbol
+import net.minecraft.util.Identifier;
+                         ^
+  symbol:   class Identifier
+  location: package net.minecraft.util
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:6: error: package net.minecraft.world.level.storage.loot.functions.foo does not exist
+import net.minecraft.world.level.storage.loot.functions.foo.Bar;
+                                                           ^
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:31: error: cannot find symbol
+        Identifier id = Identifier.of("examplemod", "thing");
+        ^
+  symbol:   class Identifier
+  location: class com.example.examplemod.ExampleMod
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:31: error: cannot find symbol
+        Identifier id = Identifier.of("examplemod", "thing");
+                        ^
+  symbol:   variable Identifier
+  location: class com.example.examplemod.ExampleMod
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:40: error: cannot find symbol
+        player.m_6469_(source, 4.0F);
+              ^
+  symbol:   method m_6469_(net.minecraft.world.damagesource.DamageSource,float)
+  location: variable player of type net.minecraft.server.level.ServerPlayer
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:44: error: cannot find symbol
+        player.getServerWorld().tick();
+              ^
+  symbol:   method getServerWorld()
+  location: variable player of type net.minecraft.server.level.ServerPlayer
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:52: error: method hurt in class Entity cannot be applied to given types;
+        entity.hurt(4.0F);
+              ^
+  required: DamageSource,float
+  found:    float
+  reason: actual and formal argument lists differ in length
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:60: error: incompatible types: int cannot be converted to String
+        String s = 42;
+                   ^
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:12: error: MyBlock is not abstract and does not override abstract method codec() in BaseEntityBlock
+public class MyBlock extends BaseEntityBlock {
+       ^
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:20: error: method does not override or implement a method from a supertype
+    @Override
+    ^
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:30: error: secret has private access in Helper
+        Helper.secret = 1;
+              ^
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:34: error: unreported exception IOException; must be caught or declared to be thrown
+        Files.readString(path);
+                        ^
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:40: error: cannot access Codec
+        Object c = codec();
+                   ^
+  class file for com.mojang.serialization.Codec not found
+/home/alex/mods/examplemod/src/main/java/com/example/examplemod/client/ClientThing.java:9: error: cannot find symbol
+        Identifier tex = Identifier.of("examplemod", "tex.png");
+        ^
+  symbol:   class Identifier
+  location: class com.example.examplemod.client.ClientThing
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+14 errors
+
+[Incubating] Problems report is available at: file:///home/alex/mods/examplemod/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileJava'.
+> Compilation failed; see the compiler output below.
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:5: error: cannot find symbol
+  import net.minecraft.util.Identifier;
+                           ^
+    symbol:   class Identifier
+    location: package net.minecraft.util
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:6: error: package net.minecraft.world.level.storage.loot.functions.foo does not exist
+  import net.minecraft.world.level.storage.loot.functions.foo.Bar;
+                                                             ^
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:31: error: cannot find symbol
+          Identifier id = Identifier.of("examplemod", "thing");
+          ^
+    symbol:   class Identifier
+    location: class com.example.examplemod.ExampleMod
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:31: error: cannot find symbol
+          Identifier id = Identifier.of("examplemod", "thing");
+                          ^
+    symbol:   variable Identifier
+    location: class com.example.examplemod.ExampleMod
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:40: error: cannot find symbol
+          player.m_6469_(source, 4.0F);
+                ^
+    symbol:   method m_6469_(net.minecraft.world.damagesource.DamageSource,float)
+    location: variable player of type net.minecraft.server.level.ServerPlayer
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:44: error: cannot find symbol
+          player.getServerWorld().tick();
+                ^
+    symbol:   method getServerWorld()
+    location: variable player of type net.minecraft.server.level.ServerPlayer
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:52: error: method hurt in class Entity cannot be applied to given types;
+          entity.hurt(4.0F);
+                ^
+    required: DamageSource,float
+    found:    float
+    reason: actual and formal argument lists differ in length
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/ExampleMod.java:60: error: incompatible types: int cannot be converted to String
+          String s = 42;
+                     ^
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:12: error: MyBlock is not abstract and does not override abstract method codec() in BaseEntityBlock
+  public class MyBlock extends BaseEntityBlock {
+         ^
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:20: error: method does not override or implement a method from a supertype
+      @Override
+      ^
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:30: error: secret has private access in Helper
+          Helper.secret = 1;
+                ^
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:34: error: unreported exception IOException; must be caught or declared to be thrown
+          Files.readString(path);
+                          ^
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/block/MyBlock.java:40: error: cannot access Codec
+          Object c = codec();
+                     ^
+    class file for com.mojang.serialization.Codec not found
+  /home/alex/mods/examplemod/src/main/java/com/example/examplemod/client/ClientThing.java:9: error: cannot find symbol
+          Identifier tex = Identifier.of("examplemod", "tex.png");
+          ^
+    symbol:   class Identifier
+    location: class com.example.examplemod.client.ClientThing
+  14 errors
+
+* Try:
+> Check your code and dependencies to fix the compilation error(s)
+> Run with --scan to get full insights.
+
+BUILD FAILED in 6s
+1 actionable task: 1 executed

@@ -11,7 +11,8 @@ import { clip, fail, ok } from "./result.js";
 import { gradleBuildInput } from "./schemas.js";
 
 const KEEP = [
-  /\.(java|kt):\d+: (error|warning):/,
+  /\.(java|kts?):(\d+:|\[\d+,\d+\])|^\s*[ew]: /,
+  /^\s*(symbol|location|required|found|reason|символ|расположение|требуется|найдено|причина)\s*:/,
   /^\* What went wrong:|^FAILURE:|^BUILD (FAILED|SUCCESSFUL)/,
   /Could not (resolve|find|GET)|status code \d{3}/,
   /JVM runtime version|Unsupported class file|class file version|languageVersion=|Gradle requires JVM/,

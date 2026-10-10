@@ -1,0 +1,12 @@
+> Task :compileKotlin FAILED
+e: file:///home/alex/mods/kmod/src/main/kotlin/com/example/KMod.kt:12:22 Unresolved reference 'Identifier'.
+e: file:///C:/Users/Alex/kmod/src/main/kotlin/com/example/KMod.kt:15:9 Unresolved reference: MinecraftClient
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+BUILD FAILED in 9s

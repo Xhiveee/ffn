@@ -1,0 +1,20 @@
+[INFO] Scanning for projects...
+[INFO] --- maven-compiler-plugin:3.13.0:compile (default-compile) @ myplugin ---
+[INFO] Compiling 3 source files with javac [debug target 21] to target\classes
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] C:\dev\myplugin\src\main\java\me\alex\MyPlugin.java:[14,35] cannot find symbol
+  symbol:   class EntityPlayer
+  location: package net.minecraft.server.level
+[ERROR] C:\dev\myplugin\src\main\java\me\alex\MyPlugin.java:[30,9] cannot find symbol
+  symbol:   class EntityPlayer
+  location: class me.alex.MyPlugin
+[ERROR] /home/alex/myplugin/src/main/java/me/alex/Util.java:[8,39] package org.bukkit.craftbukkit.v1_20_R3.entity does not exist
+[INFO] 3 errors 
+[INFO] -------------------------------------------------------------
+[INFO] BUILD FAILURE
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project myplugin: Compilation failure: Compilation failure: 
+[ERROR] C:\dev\myplugin\src\main\java\me\alex\MyPlugin.java:[14,35] cannot find symbol
+[ERROR]   symbol:   class EntityPlayer
+[ERROR]   location: package net.minecraft.server.level

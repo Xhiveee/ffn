@@ -1,0 +1,33 @@
+> Task :compileJava FAILED
+C:\Users\Алексей\mods\examplemod\src\main\java\com\example\examplemod\ExampleMod.java:5: ошибка: не удается найти символ
+import net.minecraft.util.Identifier;
+                         ^
+  символ:   класс Identifier
+  расположение: пакет net.minecraft.util
+C:\Users\Алексей\mods\examplemod\src\main\java\com\example\examplemod\ExampleMod.java:44: ошибка: не удается найти символ
+        player.getServerWorld().tick();
+              ^
+  символ:   метод getServerWorld()
+  расположение: переменная player типа net.minecraft.server.level.ServerPlayer
+C:\Users\Алексей\mods\examplemod\src\main\java\com\example\examplemod\ExampleMod.java:52: ошибка: метод hurt в классе Entity не может быть применен к указанным типам;
+        entity.hurt(4.0F);
+              ^
+  требуется: DamageSource,float
+  найдено:    float
+  причина: фактический и формальный списки аргументов различаются по длине
+C:\Users\Алексей\mods\examplemod\src\main\java\com\example\examplemod\ExampleMod.java:60: ошибка: несовместимые типы: int нельзя преобразовать в String
+        String s = 42;
+                   ^
+Примечание: Some input files use or override a deprecated API.
+4 ошибки
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileJava'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+
+BUILD FAILED in 5s

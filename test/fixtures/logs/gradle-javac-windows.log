@@ -1,0 +1,23 @@
+> Task :compileJava FAILED
+C:\Users\Alex\mods\examplemod\src\main\java\com\example\examplemod\ExampleMod.java:5: error: cannot find symbol
+import net.minecraft.util.Identifier;
+                         ^
+  symbol:   class Identifier
+  location: package net.minecraft.util
+C:\Users\Alex\mods\examplemod\src\main\java\com\example\examplemod\ExampleMod.java:31: error: cannot find symbol
+        Identifier id = Identifier.of("examplemod", "thing");
+        ^
+  symbol:   class Identifier
+  location: class com.example.examplemod.ExampleMod
+2 errors
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileJava'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+
+BUILD FAILED in 3s

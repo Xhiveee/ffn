@@ -11,3 +11,4 @@ build/
 /generated/
 /test-output/
 .DS_Store
+!test/fixtures/logs/*.log
