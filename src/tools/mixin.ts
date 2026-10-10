@@ -60,9 +60,10 @@ export const mixinGenerateInput = {
   targetClass: z.string().describe("Minecraft class to mix into (any accepted name form)."),
   method: z.string().describe("Target method name or selector name(desc); for accessor: the field name; for invoker: the method."),
   injection: z.enum(INJECTION_KINDS).describe(
-    "inject | redirect | modify_arg | modify_variable (method arguments) | modify_return_value* | modify_expression_value* | wrap_operation* | wrap_with_condition* | wrap_method* | accessor | invoker  (*MixinExtras)",
+    "inject | redirect | modify_arg | modify_variable (method arguments) | modify_constant (needs constant) | modify_return_value* | modify_expression_value* | wrap_operation* | wrap_with_condition* | wrap_method* | accessor | invoker | overwrite (last resort: replaces the whole method, conflicts with other mods)  (*MixinExtras)",
   ),
-  at: z.string().optional().describe('HEAD (default for inject) | RETURN | TAIL | INVOKE:<call> | FIELD:<field>. <call> may be a bare name ("INVOKE:tickChildren") or full "Lowner;name(desc)ret"; FFN resolves it from the method bytecode.'),
+  at: z.string().optional().describe('HEAD (default for inject) | RETURN | TAIL | INVOKE:<call> | FIELD:<field> | NEW:<class> (inject, redirect, modify_expression_value, wrap_operation). <call> may be a bare name ("INVOKE:tickChildren") or full "Lowner;name(desc)ret"; FFN resolves it from the method bytecode.'),
+  constant: z.string().optional().describe('modify_constant: the constant, e.g. "5", "0.5F", "2.0", "10L", "\"text\"", or typed "int:5", "float:0.5", "string:text", "class:net.minecraft.world.item.Item". FFN checks it exists in the target bytecode.'),
   side: z.enum(["common", "client", "server"]).optional().describe('mixins.json list; default: "client" for client-only classes, else "common" (mixins).'),
   name: z.string().optional().describe("Mixin class name (default <Target>Mixin / <Target>Accessor). An existing mixin with that name gets the new handler appended."),
   handlerName: z.string().optional(),
@@ -151,7 +152,8 @@ export async function mixinTargets(services: Services, a: T) {
           INVOKE: r.invokes.map((i) => `L${i.owner};${i.name}${i.desc}`),
           FIELD: r.fields.map((x) => `L${x.owner};${x.name}:${x.desc} (${x.opcode})`),
           NEW: r.news.map((x) => `L${x};`),
-          CONSTANT: r.constants.slice(0, 30),
+          CONSTANT: [...new Set(r.typedConstants.map((c) => `${c.type}:${c.type === "string" ? JSON.stringify(c.value) : c.value}`))].slice(0, 40),
+          JUMP: r.jumpOps.length ? `${r.jumpOps.length} jump instruction(s)` : undefined,
         };
         const lambdas = cls.m.filter(([ln, , la]) => la & ACC.SYNTHETIC && ln.startsWith(`lambda$${n.replace(/[<>]/g, "")}$`)).map(([ln, ld]) => ln + ld);
         if (lambdas.length) entry.lambdas = lambdas;
@@ -176,7 +178,7 @@ export async function mixinGenerate(services: Services, a: G) {
   const { ctx, notes } = await mixinContext(services, a.projectDir, a.source);
   const plan = await planMixin(ctx, {
     targetClass: a.targetClass, member: a.method, injection: a.injection, at: a.at, side: a.side, mixinName: a.name, handlerName: a.handlerName,
-    cancellable: a.cancellable, argIndex: a.argIndex, ordinal: a.ordinal, setter: a.setter, configFile: a.configFile,
+    cancellable: a.cancellable, argIndex: a.argIndex, ordinal: a.ordinal, setter: a.setter, configFile: a.configFile, constant: a.constant,
   });
   const errors = plan.issues.filter((i) => i.severity === "error");
   const write = !a.dryRun && (errors.length === 0 || a.force);

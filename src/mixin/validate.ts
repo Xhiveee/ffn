@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { ACC, parseMethodDesc, type CodeRefs } from "../index/classfile.js";
+import { ACC, parseMethodDesc, type CodeRefs, type TypedConstant } from "../index/classfile.js";
 import type { McIndex } from "../index/store.js";
 import type { ProjectInfo } from "../project/info.js";
 import type { ResolvedProfile } from "../profiles/schema.js";
@@ -46,6 +46,11 @@ export interface Selector {
   desc?: string;
   /** Field selectors (`name:desc`). */
   fieldDesc?: string;
+}
+
+/** Class created by an @At("NEW") target: "pkg/Class", "Lpkg/Class;", "pkg.Class" or "(args)Lpkg/Class;". */
+export function newClassOf(spec: string): string {
+  return spec.trim().replace(/^\(.*\)L(.+);$/, "$1").replace(/^L(.+);$/, "$1").replace(/\./g, "/");
 }
 
 export function parseSelector(sel: string): Selector {
@@ -95,6 +100,85 @@ interface TargetMethod {
   desc: string;
   access: number;
 }
+
+// ---------------- constants / jumps / locals helpers ----------------
+
+export interface ConstSpec {
+  type: TypedConstant["type"];
+  value: string;
+  /** @Constant(expandZeroConditions = …) / args "expandZeroConditions=…" */
+  expandZero?: boolean;
+}
+
+const CONST_KEYS: Record<string, TypedConstant["type"]> = { intValue: "int", floatValue: "float", longValue: "long", doubleValue: "double", stringValue: "string", classValue: "class", nullValue: "null" };
+export const CONST_DESC: Record<TypedConstant["type"], string> = { int: "I", float: "F", long: "J", double: "D", string: "Ljava/lang/String;", class: "Ljava/lang/Class;", null: "Ljava/lang/Object;" };
+
+/** From @At("CONSTANT") args, e.g. {"intValue=5"}, {"stringValue=foo"}, {"nullValue=true"}. */
+export function constFromArgs(args: string[]): ConstSpec | undefined {
+  let spec: ConstSpec | undefined;
+  let expand = false;
+  for (const a of args) {
+    const m = /^\s*(\w+)\s*=\s*(.*)$/.exec(a);
+    if (!m) continue;
+    if (m[1] === "expandZeroConditions") expand = true;
+    const t = CONST_KEYS[m[1]!];
+    if (t) spec = { type: t, value: normConst(t, m[2]!.trim()) };
+  }
+  return spec ? { ...spec, expandZero: expand } : undefined;
+}
+
+/** From @Constant(intValue = 5) and friends. */
+export function constFromAnn(c: Annotation): ConstSpec | undefined {
+  for (const [k, t] of Object.entries(CONST_KEYS)) {
+    const v = c.args[k];
+    if (!v) continue;
+    const raw = v.t === "class" ? v.v : v.t === "bool" ? String(v.v) : String(v.v);
+    return { type: t, value: normConst(t, raw), expandZero: !!c.args.expandZeroConditions };
+  }
+  return undefined;
+}
+
+function normConst(t: TypedConstant["type"], raw: string): string {
+  if (t === "class") return raw.replace(/\.class$/, "").replace(/^L(.+);$/, "$1").replace(/\./g, "/");
+  if (t === "string") return raw.replace(/^"|"$/g, "");
+  if (t === "null") return "null";
+  return raw.replace(/[lLfFdD_]$/g, "").replace(/_/g, "");
+}
+
+export function constMatches(spec: ConstSpec, c: TypedConstant): boolean {
+  if (spec.type !== c.type) return false;
+  switch (spec.type) {
+    case "int":
+    case "double":
+      return Number(spec.value) === Number(c.value);
+    case "float":
+      return Math.fround(Number(spec.value)) === Math.fround(Number(c.value));
+    case "long":
+      try {
+        return BigInt(spec.value) === BigInt(c.value);
+      } catch {
+        return false;
+      }
+    case "class":
+      return spec.value === c.value || c.value.endsWith(`/${spec.value}`);
+    default:
+      return spec.value === c.value;
+  }
+}
+
+export const JUMP_OPCODES: Record<string, number> = {
+  IFEQ: 153, IFNE: 154, IFLT: 155, IFGE: 156, IFGT: 157, IFLE: 158, IF_ICMPEQ: 159, IF_ICMPNE: 160, IF_ICMPLT: 161, IF_ICMPGE: 162,
+  IF_ICMPGT: 163, IF_ICMPLE: 164, IF_ACMPEQ: 165, IF_ACMPNE: 166, GOTO: 167, JSR: 168, IFNULL: 198, IFNONNULL: 199, GOTO_W: 200, JSR_W: 201,
+};
+const JUMP_NAME = Object.fromEntries(Object.entries(JUMP_OPCODES).map(([k, v]) => [v, k]));
+function opcodeOf(v: Annotation["args"][string] | undefined): number | undefined {
+  if (!v) return undefined;
+  if (v.t === "num") return Number(v.v);
+  if (v.t === "ident") return JUMP_OPCODES[v.v.replace(/^.*\./, "")];
+  return undefined;
+}
+/** Local variable category used by xLOAD/xSTORE for a type descriptor. */
+export const localCategory = (d: string): "I" | "J" | "F" | "D" | "A" => (/^[ZBCSI]$/.test(d) ? "I" : d === "J" ? "J" : d === "F" ? "F" : d === "D" ? "D" : "A");
 
 export class MixinValidator {
   constructor(readonly ctx: ValidateContext) {}
@@ -239,6 +323,9 @@ export class MixinValidator {
           const r = this.checkAt(at, matched, a.name, m.name, push);
           if (r) invoked.push(r);
         }
+        if (a.name === "ModifyConstant") this.checkModifyConstant(p, m, a, matched, push);
+        if (a.name === "ModifyVariable") this.checkLocals(p, m, a, ats, matched, push);
+        this.checkSlices(a, ats, matched, m.name, push);
         this.checkHandler(p, m, a, matched, invoked[0], push);
       } else if (a.name === "Accessor" || a.name === "Invoker") {
         this.checkAccessor(p, m, a, target, push);
@@ -322,16 +409,73 @@ export class MixinValidator {
         return { owner: sel.owner, name: sel.name, desc: sel.fieldDesc, kind: "FIELD" };
       }
       case "NEW": {
-        const cls = (target ?? strsOf(at.args.args).find((x) => x.startsWith("class="))?.slice(6) ?? "").replace(/^L(.+);$/, "$1").replace(/^\(.*\)L(.+);$/, "$1").replace(/\./g, "/");
-        if (!cls) return undefined;
-        const ok = methods.some((t) => this.refsOf(t)?.news.includes(cls));
-        if (!ok) push({ severity: "error", message: `@${ann} ${handler}: ${where} never creates ${cls.replace(/\//g, ".")}.` });
-        return { name: "<init>", owner: cls, kind: "NEW" };
+        const spec = target ?? strsOf(at.args.args).find((x) => x.startsWith("class="))?.slice(6) ?? "";
+        const cls = newClassOf(spec);
+        if (!cls) {
+          push({ severity: "error", message: `@${ann} ${handler}: @At("NEW") needs target = "pkg/Class" or "(args)Lpkg/Class;".` });
+          return undefined;
+        }
+        const ctorDesc = /^\((.*)\)L.+;$/.exec(spec.trim()) ? `(${/^\((.*)\)/.exec(spec.trim())![1]})V` : undefined;
+        let ok = false;
+        const created = new Set<string>();
+        const ctors = new Set<string>();
+        for (const t of methods) {
+          const refs = this.refsOf(t);
+          if (!refs) continue;
+          refs.news.forEach((n) => created.add(n));
+          if (refs.news.includes(cls)) {
+            const inits = refs.invokes.filter((i) => i.owner === cls && i.name === "<init>").map((i) => i.desc);
+            inits.forEach((d) => ctors.add(d));
+            if (!ctorDesc || inits.includes(ctorDesc)) ok = true;
+          }
+        }
+        if (!ok)
+          push({
+            severity: "error",
+            message: ctors.size ? `@${ann} ${handler}: ${where} creates ${cls.replace(/\//g, ".")} but never with constructor ${ctorDesc}.` : `@${ann} ${handler}: ${where} never creates ${cls.replace(/\//g, ".")}.`,
+            suggestion: ctors.size ? `Constructors used: ${[...ctors].join(", ")}` : created.size ? `Objects created there: ${[...created].slice(0, 10).map((c) => c.replace(/\//g, ".")).join(", ")}` : undefined,
+          });
+        return { name: "<init>", owner: cls, desc: ctorDesc ?? [...ctors][0], kind: "NEW" };
       }
-      case "CONSTANT":
-      case "JUMP":
+      case "CONSTANT": {
+        const spec = constFromArgs(strsOf(at.args.args));
+        if (!spec) {
+          push({ severity: "error", message: `@${ann} ${handler}: @At("CONSTANT") needs args = "intValue=…" (or floatValue/longValue/doubleValue/stringValue/classValue/nullValue=true).` });
+          return undefined;
+        }
+        this.checkConstantPresent(spec, methods, numOf(at.args.ordinal), `@${ann} ${handler}`, push);
+        return { name: spec.value, desc: CONST_DESC[spec.type], kind: "CONSTANT" };
+      }
+      case "JUMP": {
+        const opcode = opcodeOf(at.args.opcode);
+        const ordinal = numOf(at.args.ordinal);
+        let analyzed = false;
+        const present: number[] = [];
+        for (const t of methods) {
+          const refs = this.refsOf(t);
+          if (!refs) continue;
+          analyzed = true;
+          present.push(...refs.jumpOps.map((j) => j.opcode));
+        }
+        if (!analyzed) return undefined;
+        const hits = opcode === undefined ? present : present.filter((o) => o === opcode);
+        if (!hits.length)
+          push({
+            severity: "error",
+            message: `@${ann} ${handler}: ${where} has no ${opcode === undefined ? "jump instructions" : `${JUMP_NAME[opcode] ?? opcode} jump`}.`,
+            suggestion: present.length ? `Jumps present: ${[...new Set(present)].map((o) => JUMP_NAME[o] ?? o).join(", ")}` : "The method has no branches; use another injection point.",
+          });
+        else if (ordinal !== undefined && ordinal >= hits.length) push({ severity: "error", message: `@${ann} ${handler}: ordinal = ${ordinal} but there are only ${hits.length} matching jump(s).` });
+        else if (opcode === undefined && ordinal === undefined && hits.length > 1) push({ severity: "warning", message: `@${ann} ${handler}: @At("JUMP") without opcode/ordinal matches all ${hits.length} jumps; set opcode = Opcodes.X and ordinal.` });
+        return undefined;
+      }
       case "LOAD":
-      case "STORE":
+      case "STORE": {
+        let any = false;
+        for (const t of methods) if (this.refsOf(t)?.locals.some((l) => l.kind === value)) any = true;
+        if (!any && methods.some((t) => this.refsOf(t))) push({ severity: "error", message: `@${ann} ${handler}: ${where} has no ${value === "LOAD" ? "local variable loads" : "local variable stores"}.` });
+        return undefined;
+      }
       case "MIXINEXTRAS:EXPRESSION":
       case "CONSTANT_EXPRESSION":
         push({ severity: "info", message: `@${ann} ${handler}: @At("${value}") is not checked in detail by FFN.` });
@@ -339,6 +483,213 @@ export class MixinValidator {
       default:
         push({ severity: "warning", message: `@${ann} ${handler}: unknown injection point "${value}".` });
         return undefined;
+    }
+  }
+
+  private checkConstantPresent(spec: ConstSpec, methods: TargetMethod[], ordinal: number | undefined, label: string, push: (i: MixinIssue) => void): void {
+    let analyzed = false;
+    let hits = 0;
+    const sameType = new Set<string>();
+    let zeroJumps = 0;
+    for (const t of methods) {
+      const refs = this.refsOf(t);
+      if (!refs) continue;
+      analyzed = true;
+      for (const c of refs.typedConstants) {
+        if (constMatches(spec, c)) hits++;
+        else if (c.type === spec.type) sameType.add(c.value);
+      }
+      zeroJumps += refs.jumpOps.filter((j) => j.opcode >= 153 && j.opcode <= 158).length;
+    }
+    if (!analyzed) return;
+    const shown = spec.type === "string" ? JSON.stringify(spec.value) : spec.value;
+    if (!hits) {
+      const zero = spec.type === "int" && Number(spec.value) === 0 && zeroJumps > 0;
+      if (zero && spec.expandZero) return; // comparisons against zero compile to IFxx without a constant
+      push({
+        severity: "error",
+        message: `${label}: ${methods.map((t) => t.name + t.desc).join(", ")} never pushes the ${spec.type} constant ${shown}.`,
+        suggestion: zero
+          ? "Comparisons with 0 compile to IFEQ/IFLT/… with no constant: add expandZeroConditions = Constant.Condition.… (or target the JUMP)."
+          : sameType.size
+            ? `${spec.type} constants present: ${[...sameType].slice(0, 12).join(", ")}${spec.type === "int" ? " (note: javac folds constant expressions, and byte/short/char use int constants)" : ""}`
+            : `No ${spec.type} constants in the target.`,
+      });
+    } else if (ordinal !== undefined && ordinal >= hits) push({ severity: "error", message: `${label}: ordinal = ${ordinal} but the constant ${shown} occurs only ${hits} time(s).` });
+  }
+
+  private checkModifyConstant(p: ParsedJava, m: ParsedMember, a: Annotation, methods: TargetMethod[], push: (i: MixinIssue) => void): void {
+    const consts = annsOf(a.args.constant);
+    const label = `@ModifyConstant ${m.name}`;
+    if (!consts.length) {
+      push({ severity: "warning", message: `${label}: no constant = @Constant(...) — Mixin then matches EVERY constant of the handler's type; specify the value.` });
+      return;
+    }
+    const ret = this.typeDesc(p, m.type);
+    const p0 = m.params[0] ? this.typeDesc(p, m.params[0].type) : undefined;
+    for (const c of consts) {
+      const spec = constFromAnn(c);
+      if (!spec) {
+        push({ severity: "error", message: `${label}: @Constant needs one of intValue/floatValue/longValue/doubleValue/stringValue/classValue/nullValue.` });
+        continue;
+      }
+      this.checkConstantPresent(spec, methods, numOf(c.args.ordinal), label, push);
+      const want = CONST_DESC[spec.type];
+      if (spec.type !== "null") {
+        if (ret && ret !== want) push({ severity: "error", message: `${label}: handler must return ${want} (type of the ${spec.type} constant), got ${ret}.` });
+        if (p0 && p0 !== want) push({ severity: "error", message: `${label}: first parameter must be ${want}, got ${p0}.` });
+      }
+    }
+  }
+
+  private checkLocals(p: ParsedJava, m: ParsedMember, a: Annotation, ats: Annotation[], methods: TargetMethod[], push: (i: MixinIssue) => void): void {
+    const p0 = m.params[0] ? this.typeDesc(p, m.params[0].type) : undefined;
+    if (!p0 || boolOf(a.args.argsOnly)) return;
+    const cat = localCategory(p0);
+    const index = numOf(a.args.index);
+    const ordinal = numOf(a.args.ordinal);
+    const names = strsOf(a.args.name);
+    const label = `@ModifyVariable ${m.name}`;
+    const kinds = new Set(ats.map((x) => strOf(x.args.value)).filter((v) => v === "LOAD" || v === "STORE"));
+    for (const t of methods) {
+      const r = this.ctx.index.reader(t.owner);
+      const mi = r?.info.methods.find((x) => x.name === t.name && x.desc === t.desc);
+      const refs = mi ? r!.analyze(mi) : undefined;
+      if (!refs) continue;
+      const rel = refs.locals.filter((l) => l.type === cat && (!kinds.size || kinds.has(l.kind)));
+      const idx = [...new Set(rel.map((l) => l.index))].sort((x, y) => x - y);
+      const tl = `${label} → ${t.name}${t.desc}`;
+      if (!idx.length) {
+        push({ severity: "error", message: `${tl}: no ${kinds.size ? [...kinds].join("/") + " of a" : ""} ${p0} (${cat}) local variable in the target.` });
+        continue;
+      }
+      if (index !== undefined && !idx.includes(index)) push({ severity: "error", message: `${tl}: index = ${index} is not a ${cat}-type local used there; indices: ${idx.join(", ")}.` });
+      if (names.length) {
+        const lvt = mi?.localVariables ?? [];
+        if (!lvt.length) push({ severity: "warning", message: `${tl}: name = ${names.join("/")} cannot be checked — this jar has no local variable table (names are only available in dev with LVT); use ordinal or index.` });
+        else if (!names.some((n) => lvt.some((v) => v.name === n))) push({ severity: "error", message: `${tl}: no local named ${names.join("/")}. Locals of that type: ${lvt.filter((v) => localCategory(v.desc) === cat).map((v) => v.name).join(", ") || "none"}.` });
+      }
+      if (ordinal !== undefined) {
+        const firstLocal = (t.access & ACC.STATIC ? 0 : 1) + parseMethodDesc(t.desc).params.reduce((n, d) => n + (d === "J" || d === "D" ? 2 : 1), 0);
+        const locals = idx.filter((i) => i >= firstLocal);
+        if (ordinal >= locals.length) push({ severity: "warning", message: `${tl}: ordinal = ${ordinal} but only ${locals.length} ${cat}-type local(s) beyond the parameters were found (indices ${locals.join(", ") || "none"}); slots may be reused, so verify in the bytecode.` });
+      }
+      if (index === undefined && ordinal === undefined && !names.length && idx.length > 1)
+        push({ severity: "warning", message: `${tl}: ${idx.length} ${cat}-type locals (slots ${idx.join(", ")}) — implicit selection fails when more than one is in scope; set ordinal, index or name.` });
+    }
+  }
+
+  /** Positions (bytecode offsets) an @At matches in one target method; undefined = not computable. */
+  private positions(at: Annotation, t: TargetMethod): number[] | undefined {
+    const refs = this.refsOf(t);
+    if (!refs) return undefined;
+    const value = strOf(at.args.value) ?? "";
+    const target = strOf(at.args.target);
+    const seq = refs.seq;
+    let out: number[] | undefined;
+    switch (value) {
+      case "HEAD":
+        return [0];
+      case "RETURN":
+        out = seq.filter((x) => x.kind === "RETURN").map((x) => x.pc);
+        break;
+      case "TAIL": {
+        const r = seq.filter((x) => x.kind === "RETURN");
+        return r.length ? [r[r.length - 1]!.pc] : [];
+      }
+      case "INVOKE":
+      case "INVOKE_ASSIGN":
+      case "INVOKE_STRING": {
+        if (!target) return undefined;
+        const sel = parseSelector(target);
+        out = seq
+          .filter((x) => {
+            if (x.kind !== "INVOKE") return false;
+            const mm = /^L(.+?);([^(]+)(\(.*)$/.exec(x.key);
+            return !!mm && nameMatches(sel.name, mm[2]!) && (!sel.desc || sel.desc === mm[3]) && (!sel.owner || this.related(sel.owner, mm[1]!));
+          })
+          .map((x) => x.pc);
+        break;
+      }
+      case "FIELD": {
+        if (!target) return undefined;
+        const sel = parseSelector(target);
+        const op = opcodeOf(at.args.opcode);
+        const opName = op === undefined ? undefined : ({ 178: "GETSTATIC", 179: "PUTSTATIC", 180: "GETFIELD", 181: "PUTFIELD" } as Record<number, string>)[op];
+        out = seq
+          .filter((x) => {
+            if (x.kind !== "FIELD" || (opName && x.opcode !== opName)) return false;
+            const mm = /^L(.+?);([^:]+):(.+)$/.exec(x.key);
+            return !!mm && mm[2] === sel.name && (!sel.fieldDesc || sel.fieldDesc === mm[3]) && (!sel.owner || this.related(sel.owner, mm[1]!));
+          })
+          .map((x) => x.pc);
+        break;
+      }
+      case "NEW": {
+        const cls = newClassOf(target ?? strsOf(at.args.args).find((x) => x.startsWith("class="))?.slice(6) ?? "");
+        if (!cls) return undefined;
+        out = seq.filter((x) => x.kind === "NEW" && x.key === cls).map((x) => x.pc);
+        break;
+      }
+      case "CONSTANT": {
+        const spec = constFromArgs(strsOf(at.args.args));
+        if (!spec) return undefined;
+        out = refs.typedConstants.filter((c) => constMatches(spec, c)).map((c) => c.pc);
+        break;
+      }
+      case "JUMP": {
+        const op = opcodeOf(at.args.opcode);
+        out = refs.jumpOps.filter((j) => op === undefined || j.opcode === op).map((j) => j.pc);
+        break;
+      }
+      default:
+        return undefined;
+    }
+    const ordinal = numOf(at.args.ordinal);
+    if (ordinal !== undefined && out) return out[ordinal] !== undefined ? [out[ordinal]!] : [];
+    return out;
+  }
+
+  /** @Slice(from = @At, to = @At): both anchors must exist, from must precede to, and the injection point must fall inside. */
+  private checkSlices(a: Annotation, ats: Annotation[], methods: TargetMethod[], handler: string, push: (i: MixinIssue) => void): void {
+    const slices = annsOf(a.args.slice);
+    if (!slices.length) return;
+    const label = `@${a.name} ${handler}`;
+    const constants = a.name === "ModifyConstant" ? annsOf(a.args.constant).map(constFromAnn).filter((c): c is ConstSpec => !!c) : [];
+    for (const sl of slices) {
+      const id = strOf(sl.args.id) ?? "";
+      const from = annsOf(sl.args.from)[0];
+      const to = annsOf(sl.args.to)[0];
+      if (!from && !to) {
+        push({ severity: "warning", message: `${label}: @Slice${id ? `(id = "${id}")` : ""} has neither from nor to; it selects the whole method.` });
+        continue;
+      }
+      for (const [k, anchor] of [["from", from], ["to", to]] as const) if (anchor) this.checkAt(anchor, methods, `${a.name} slice.${k}`, handler, push);
+      const mine = ats.filter((x) => (strOf(x.args.slice) ?? "") === id);
+      for (const t of methods) {
+        const fromPos = from ? this.positions(from, t) : [0];
+        const toPos = to ? this.positions(to, t) : [Number.MAX_SAFE_INTEGER];
+        if (!fromPos || !toPos || !fromPos.length || !toPos.length) continue; // unknown or already reported
+        const lo = Math.min(...fromPos);
+        const hi = Math.max(...toPos);
+        if (lo > hi) {
+          push({ severity: "error", message: `${label} → ${t.name}${t.desc}: the slice is empty — its "from" point (offset ${lo}) comes after its "to" point (offset ${hi}).` });
+          continue;
+        }
+        const targets: number[][] = [];
+        for (const at of mine) {
+          const pos = this.positions(at, t);
+          if (pos) targets.push(pos);
+        }
+        for (const c of constants) {
+          const refs = this.refsOf(t);
+          if (refs) targets.push(refs.typedConstants.filter((x) => constMatches(c, x)).map((x) => x.pc));
+        }
+        for (const pos of targets) {
+          if (pos.length && !pos.some((x) => x >= lo && x <= hi))
+            push({ severity: "error", message: `${label} → ${t.name}${t.desc}: the injection point occurs only outside the slice (offsets ${pos.join(", ")}; slice ${lo}..${hi === Number.MAX_SAFE_INTEGER ? "end" : hi}).`, suggestion: "Move the slice anchors or drop the slice." });
+        }
+      }
     }
   }
 

@@ -7,11 +7,11 @@ import path from "node:path";
 import { ACC, parseMethodDesc } from "../index/classfile.js";
 import type { McIndex } from "../index/store.js";
 import { parseJava } from "./javaparse.js";
-import { boxed, MixinValidator, parseSelector, type MixinIssue, type ValidateContext } from "./validate.js";
+import { boxed, CONST_DESC, constMatches, MixinValidator, parseSelector, type ConstSpec, type MixinIssue, type ValidateContext } from "./validate.js";
 
 export const INJECTION_KINDS = [
   "inject", "redirect", "modify_arg", "modify_variable", "modify_return_value", "modify_expression_value",
-  "wrap_operation", "wrap_with_condition", "wrap_method", "accessor", "invoker",
+  "wrap_operation", "wrap_with_condition", "wrap_method", "accessor", "invoker", "modify_constant", "overwrite",
 ] as const;
 export type InjectionKind = (typeof INJECTION_KINDS)[number];
 const EXTRAS: InjectionKind[] = ["modify_return_value", "modify_expression_value", "wrap_operation", "wrap_with_condition", "wrap_method"];
@@ -29,6 +29,23 @@ export interface GenerateRequest {
   ordinal?: number;
   setter?: boolean;
   configFile?: string;
+  /** modify_constant: the constant to change, e.g. "5", "int:5", "0.3F", "float:0.3", "\"text\"", "string:text", "class:net.minecraft.world.item.Item", "null". */
+  constant?: string;
+}
+
+/** Parse the user's constant (typed prefix or literal syntax). */
+export function parseConstant(raw: string): ConstSpec {
+  const t = raw.trim();
+  const pre = /^(int|long|float|double|string|class|null)\s*:\s*(.*)$/s.exec(t);
+  if (pre) return { type: pre[1] as ConstSpec["type"], value: pre[1] === "class" ? pre[2]!.replace(/\.class$/, "").replace(/\./g, "/") : pre[1] === "string" ? pre[2]! : pre[2]!.replace(/[lLfFdD]$/, "") };
+  if (t === "null") return { type: "null", value: "null" };
+  if (/^".*"$/s.test(t)) return { type: "string", value: t.slice(1, -1) };
+  if (/^-?\d+[lL]$/.test(t)) return { type: "long", value: t.slice(0, -1) };
+  if (/^-?[\d.]+(e-?\d+)?[fF]$/.test(t)) return { type: "float", value: t.slice(0, -1) };
+  if (/^-?[\d.]+(e-?\d+)?[dD]$/.test(t) || /^-?\d*\.\d+(e-?\d+)?$/.test(t)) return { type: "double", value: t.replace(/[dD]$/, "") };
+  if (/^-?\d+$/.test(t)) return { type: "int", value: t };
+  if (/\.class$/.test(t)) return { type: "class", value: t.replace(/\.class$/, "").replace(/\./g, "/") };
+  return { type: "string", value: t };
 }
 
 export interface GeneratePlan {
@@ -204,19 +221,49 @@ export async function planMixin(ctx: ValidateContext, req: GenerateRequest): Pro
     const { params: tp, ret: tr } = parseMethodDesc(mdesc);
     const selector = `${mname}${mdesc}`;
     const st = tStatic ? "static " : "";
+    if (req.injection === "overwrite") {
+      if (mname === "<init>" || mname === "<clinit>") throw new Error("Constructors and static initialisers cannot be @Overwrite-n.");
+      namer.use("org.spongepowered.asm.mixin.Overwrite");
+      const pn = paramNames(namer, tp, new Set());
+      const vis = macc & ACC.PUBLIC ? "public " : macc & ACC.PROTECTED ? "protected " : macc & ACC.PRIVATE ? "private " : "";
+      handler = mname;
+      annotationText = "@Overwrite";
+      lines.push(
+        `${I}/**`,
+        `${I} * @author ${modId}`,
+        `${I} * @reason TODO: explain why an overwrite is unavoidable (Mixin warns without @author/@reason).`,
+        `${I} * WARNING: @Overwrite replaces the whole method; any other mod injecting into or overwriting it breaks or is broken.`,
+        `${I} * Prefer @Inject (cancellable), @WrapMethod or @WrapOperation. Copy the original body first (get_source) and keep it close to vanilla.`,
+        `${I} */`,
+        `${I}@Overwrite`,
+        `${I}${vis}${st}${namer.type(tr)} ${mname}(${tp.map((d, k) => `${namer.type(d)} ${pn[k]}`).join(", ")}) {`,
+        `${I}${I}// TODO: full replacement body (start from the original source).`,
+        `${I}${I}throw new UnsupportedOperationException("FFN: @Overwrite body not written yet");`,
+        `${I}}`,
+      );
+    }
+    if (req.injection === "modify_constant") {
+      if (!req.constant) {
+        const r0 = index.reader(target);
+        const refs0 = r0?.analyze(r0.info.methods.find((m) => m.name === mname && m.desc === mdesc)!);
+        throw new Error(`modify_constant needs constant (e.g. "5", "0.5F", "\"text\""). Constants in ${selector}: ${[...new Set((refs0?.typedConstants ?? []).map((c) => `${c.type}:${c.value}`))].slice(0, 40).join(", ")}`);
+      }
+    }
     // resolve @At
     const refs = index.reader(target)?.analyze(index.reader(target)!.info.methods.find((m) => m.name === mname && m.desc === mdesc)!);
     const needsCall = ["redirect", "modify_arg", "wrap_operation", "wrap_with_condition"].includes(req.injection);
     let atText: string;
     let call: { owner: string; name: string; desc: string; opcode: string } | undefined;
     let field: { owner: string; name: string; desc: string; opcode: string } | undefined;
-    const rawAt = req.at ?? (req.injection === "modify_return_value" ? "RETURN" : req.injection === "inject" ? (mname === "<init>" ? "TAIL" : "HEAD") : req.injection === "modify_variable" ? "HEAD" : undefined);
+    const skipAt = req.injection === "overwrite" || req.injection === "modify_constant";
+    const rawAt = skipAt ? "HEAD" : req.at ?? (req.injection === "modify_return_value" ? "RETURN" : req.injection === "inject" ? (mname === "<init>" ? "TAIL" : "HEAD") : req.injection === "modify_variable" ? "HEAD" : undefined);
     if (!rawAt && req.injection !== "wrap_method") {
       const calls = refs?.invokes.map((i) => `INVOKE:L${i.owner};${i.name}${i.desc}`).slice(0, 40) ?? [];
       throw new Error(`${req.injection} needs at = "INVOKE:<call>"${req.injection === "modify_expression_value" ? ' or "FIELD:<field>"' : ""}. Calls in ${selector}: ${calls.join(", ")}`);
     }
     const ord = req.ordinal !== undefined ? `, ordinal = ${req.ordinal}` : "";
-    if (!rawAt) atText = "";
+    let created: { cls: string; ctor?: string } | undefined;
+    if (!rawAt || skipAt) atText = "";
     else if (/^(HEAD|RETURN|TAIL)$/.test(rawAt)) {
       if (needsCall || req.injection === "modify_expression_value") throw new Error(`${req.injection} needs an INVOKE${req.injection === "modify_expression_value" ? "/FIELD" : ""} injection point, not ${rawAt}.`);
       atText = ord ? `@At(value = "${rawAt}"${ord})` : `@At("${rawAt}")`;
@@ -239,20 +286,54 @@ export async function planMixin(ctx: ValidateContext, req: GenerateRequest): Pro
         atText = `@At(value = "FIELD", target = "L${field.owner};${field.name}:${field.desc}"${req.injection === "modify_expression_value" ? "" : `, opcode = Opcodes.${field.opcode}`}${ord})`;
         if (req.injection !== "modify_expression_value") namer.use("org.objectweb.asm.Opcodes");
       } else {
-        throw new Error("NEW injection points are not generated by FFN yet; use INVOKE on the constructor call or write it by hand.");
+        // NEW:<class> — the object creation (NEW + constructor call) of that class
+        const cls0 = m[2].replace(/^L(.+);$/, "$1").replace(/\./g, "/");
+        const hits = (refs?.news ?? []).filter((n) => n === cls0 || n.endsWith(`/${cls0}`) || n.replace(/\$/g, "/").endsWith(`/${cls0.replace(/\$/g, "/")}`));
+        if (!hits.length) throw new Error(`${selector} never creates ${m[2]}. Objects created: ${(refs?.news ?? []).map((n) => n.replace(/\//g, ".")).slice(0, 30).join(", ") || "none"}`);
+        if (new Set(hits).size > 1) throw new Error(`${m[2]} is ambiguous: ${[...new Set(hits)].join(", ")}`);
+        const cls = hits[0]!;
+        const ctors = [...new Set((refs?.invokes ?? []).filter((i) => i.owner === cls && i.name === "<init>").map((i) => i.desc))];
+        const ctor = ctors.length === 1 ? ctors[0] : undefined;
+        if (!ctor && ["redirect", "wrap_operation"].includes(req.injection)) throw new Error(`${cls} is created with ${ctors.length} different constructors (${ctors.join(", ")}); FFN can only generate ${req.injection} for a single one — write it by hand with the right descriptor.`);
+        created = { cls, ctor };
+        const tgt = ctor ? `${ctor.slice(0, ctor.lastIndexOf(")") + 1)}L${cls};` : cls;
+        atText = `@At(value = "NEW", target = "${tgt}"${ord})`;
+        if (!["inject", "redirect", "modify_expression_value", "wrap_operation"].includes(req.injection)) throw new Error(`NEW injection points are supported for inject, redirect, modify_expression_value and wrap_operation, not ${req.injection}.`);
       }
-      if (needsCall && !call) throw new Error(`${req.injection} needs an INVOKE injection point.`);
+      if (needsCall && !call && !(created && ["redirect", "wrap_operation"].includes(req.injection))) throw new Error(`${req.injection} needs an INVOKE injection point.`);
     }
-    namer.use("org.spongepowered.asm.mixin.injection.At");
+    if (!skipAt) namer.use("org.spongepowered.asm.mixin.injection.At");
     const taken = new Set<string>();
     const targetParams = () => {
       const pn = paramNames(namer, tp, taken);
       return tp.map((d, k) => `${namer.type(d)} ${pn[k]}`);
     };
     const base = (req.handlerName ?? `${modId}$${req.injection.replace(/_(.)/g, (_, c: string) => c.toUpperCase())}${cap(mname === "<init>" ? "init" : mname)}`).replace(/[^\w$]/g, "_");
-    handler = uniqueName(base);
+    if (req.injection !== "overwrite") handler = uniqueName(base);
     const methodSel = `"${selector}"`;
     switch (req.injection) {
+      case "overwrite":
+        break;
+      case "modify_constant": {
+        const spec = parseConstant(req.constant!);
+        const consts = refs?.typedConstants ?? [];
+        const hits = consts.filter((c) => constMatches(spec, c));
+        if (!hits.length) {
+          const same = [...new Set(consts.filter((c) => c.type === spec.type).map((c) => c.value))];
+          throw new Error(`${selector} never pushes the ${spec.type} constant ${spec.value}.${same.length ? ` ${spec.type} constants there: ${same.slice(0, 30).join(", ")}` : ` Constants there: ${[...new Set(consts.map((c) => `${c.type}:${c.value}`))].slice(0, 30).join(", ") || "none"}`}${spec.type === "int" && Number(spec.value) === 0 ? " (comparisons with 0 have no constant: use expandZeroConditions by hand)" : ""}`);
+        }
+        if (spec.type === "null") throw new Error("Modifying a null constant is not supported by @ModifyConstant handlers in a useful way; use @ModifyExpressionValue or @Redirect.");
+        namer.use("org.spongepowered.asm.mixin.injection.ModifyConstant");
+        namer.use("org.spongepowered.asm.mixin.injection.Constant");
+        const key = { int: "intValue", float: "floatValue", long: "longValue", double: "doubleValue", string: "stringValue", class: "classValue", null: "nullValue" }[spec.type];
+        const lit =
+          spec.type === "string" ? JSON.stringify(spec.value) : spec.type === "class" ? `${namer.type(`L${spec.value.includes("/") ? spec.value : hits[0]!.value};`)}.class` : spec.type === "float" ? `${spec.value}F` : spec.type === "long" ? `${spec.value}L` : spec.type === "double" ? (/[.eE]/.test(spec.value) ? spec.value : `${spec.value}.0`) : spec.value;
+        const t = namer.type(CONST_DESC[spec.type]);
+        const ordinalText = req.ordinal !== undefined ? `, ordinal = ${req.ordinal}` : "";
+        annotationText = `@ModifyConstant(method = ${methodSel}, constant = @Constant(${key} = ${lit}${ordinalText}))`;
+        lines.push(`${I}${annotationText}`, `${I}private ${st}${t} ${handler}(${t} original) {`, `${I}${I}return original; // TODO: modify${hits.length > 1 && req.ordinal === undefined ? ` (matches all ${hits.length} occurrences; set ordinal to pick one)` : ""}`, `${I}}`);
+        break;
+      }
       case "inject": {
         const ciType = tr === "V" ? namer.use("org.spongepowered.asm.mixin.injection.callback.CallbackInfo") : `${namer.use("org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable")}<${namer.boxedType(tr)}>`;
         namer.use("org.spongepowered.asm.mixin.injection.Inject");
@@ -295,6 +376,29 @@ export async function planMixin(ctx: ValidateContext, req: GenerateRequest): Pro
           const t = namer.type(field.desc);
           annotationText = `@ModifyExpressionValue(method = ${methodSel}, at = ${atText})`;
           lines.push(`${I}${annotationText}`, `${I}private ${st}${t} ${handler}(${t} original) {`, `${I}${I}return original; // TODO: modify`, `${I}}`);
+          break;
+        }
+        if (created) {
+          const ct = namer.type(`L${created.cls};`);
+          if (req.injection === "modify_expression_value") {
+            namer.use("com.llamalad7.mixinextras.injector.ModifyExpressionValue");
+            annotationText = `@ModifyExpressionValue(method = ${methodSel}, at = ${atText})`;
+            lines.push(`${I}${annotationText}`, `${I}private ${st}${ct} ${handler}(${ct} original) {`, `${I}${I}return original; // TODO: modify or replace the new object`, `${I}}`);
+            break;
+          }
+          const { params: cp } = parseMethodDesc(created.ctor!);
+          const names = paramNames(namer, cp, taken);
+          const ps = cp.map((d, k) => `${namer.type(d)} ${names[k]}`);
+          if (req.injection === "redirect") {
+            namer.use("org.spongepowered.asm.mixin.injection.Redirect");
+            annotationText = `@Redirect(method = ${methodSel}, at = ${atText})`;
+            lines.push(`${I}${annotationText}`, `${I}private ${st}${ct} ${handler}(${ps.join(", ")}) {`, `${I}${I}// TODO: return a replacement object (only one mod can redirect this; prefer wrap_operation with MixinExtras).`, `${I}${I}return new ${ct}(${names.join(", ")});`, `${I}}`);
+          } else {
+            namer.use("com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation");
+            const op = namer.use("com.llamalad7.mixinextras.injector.wrapoperation.Operation");
+            annotationText = `@WrapOperation(method = ${methodSel}, at = ${atText})`;
+            lines.push(`${I}${annotationText}`, `${I}private ${st}${ct} ${handler}(${[...ps, `${op}<${ct}> original`].join(", ")}) {`, `${I}${I}return original.call(${names.join(", ")}); // TODO: code before/after or change arguments`, `${I}}`);
+          }
           break;
         }
         if (!call) throw new Error(`${req.injection} needs at = "INVOKE:<call>".`);

@@ -160,7 +160,7 @@ export class ClassReader {
 
   /** Walk a method's bytecode and collect references usable as Mixin @At targets. */
   analyze(m: MethodInfo): CodeRefs {
-    const refs: CodeRefs = { invokes: [], fields: [], news: [], constants: [], returns: 0, instanceofs: [], jumps: 0 };
+    const refs: CodeRefs = { invokes: [], fields: [], news: [], constants: [], returns: 0, instanceofs: [], jumps: 0, typedConstants: [], locals: [], jumpOps: [], seq: [] };
     if (!m.code) return refs;
     const b = this.buf;
     const base = m.code.start;
@@ -173,27 +173,49 @@ export class ClassReader {
         list.push(v);
       }
     };
+    const LT = ["I", "J", "F", "D", "A"] as const;
+    const tconst = (type: TypedConstant["type"], value: string) => {
+      refs.typedConstants.push({ type, value, pc: p - base });
+      refs.seq.push({ pc: p - base, kind: "CONSTANT", key: `${type}:${value}` });
+    };
+    const local = (kind: "LOAD" | "STORE", t: number, index: number) => {
+      refs.locals.push({ kind, type: LT[t]!, index, pc: p - base });
+      refs.seq.push({ pc: p - base, kind, key: `${LT[t]}${index}` });
+    };
+    const jump = (code: number) => {
+      refs.jumps++;
+      refs.jumpOps.push({ opcode: code, pc: p - base });
+      refs.seq.push({ pc: p - base, kind: "JUMP", key: String(code) });
+    };
     while (p < end) {
       const op = b[p]!;
       switch (true) {
+        case op === 0x01: tconst("null", "null"); p += 1; break;
         case op === 0x12 || op === 0x13 || op === 0x14: {
           const idx = op === 0x12 ? b[p + 1]! : b.readUInt16BE(p + 1);
           const c = this.pool[idx];
           if (c) {
             const v = c.tag === 8 ? JSON.stringify(this.utf8(c.index)) : c.tag === 7 ? `class ${this.utf8(c.index)}` : "value" in c ? String(c.value) : undefined;
             if (v !== undefined) addOnce(refs.constants, `c:${v}`, v);
+            const ty = ({ 3: "int", 4: "float", 5: "long", 6: "double", 8: "string", 7: "class" } as Record<number, TypedConstant["type"]>)[c.tag];
+            if (ty) tconst(ty, c.tag === 8 || c.tag === 7 ? this.utf8(c.index) : c.tag === 4 ? shortFloat(Number((c as { value: number }).value)) : String((c as { value?: unknown }).value));
           }
           p += op === 0x12 ? 2 : 3;
           break;
         }
-        case op === 0x10: addOnce(refs.constants, `c:${b.readInt8(p + 1)}`, String(b.readInt8(p + 1))); p += 2; break;
-        case op === 0x11: addOnce(refs.constants, `c:${b.readInt16BE(p + 1)}`, String(b.readInt16BE(p + 1))); p += 3; break;
-        case op >= 0x02 && op <= 0x08: addOnce(refs.constants, `c:${op - 3}`, String(op - 3)); p += 1; break;
-        case op >= 0x15 && op <= 0x19: p += 2; break;
-        case op >= 0x36 && op <= 0x3a: p += 2; break;
+        case op === 0x10: addOnce(refs.constants, `c:${b.readInt8(p + 1)}`, String(b.readInt8(p + 1))); tconst("int", String(b.readInt8(p + 1))); p += 2; break;
+        case op === 0x11: addOnce(refs.constants, `c:${b.readInt16BE(p + 1)}`, String(b.readInt16BE(p + 1))); tconst("int", String(b.readInt16BE(p + 1))); p += 3; break;
+        case op >= 0x02 && op <= 0x08: addOnce(refs.constants, `c:${op - 3}`, String(op - 3)); tconst("int", String(op - 3)); p += 1; break;
+        case op === 0x09 || op === 0x0a: tconst("long", String(op - 0x09)); p += 1; break;
+        case op >= 0x0b && op <= 0x0d: tconst("float", String(op - 0x0b)); p += 1; break;
+        case op === 0x0e || op === 0x0f: tconst("double", String(op - 0x0e)); p += 1; break;
+        case op >= 0x15 && op <= 0x19: local("LOAD", op - 0x15, b[p + 1]!); p += 2; break;
+        case op >= 0x1a && op <= 0x2d: local("LOAD", Math.floor((op - 0x1a) / 4), (op - 0x1a) % 4); p += 1; break;
+        case op >= 0x36 && op <= 0x3a: local("STORE", op - 0x36, b[p + 1]!); p += 2; break;
+        case op >= 0x3b && op <= 0x4e: local("STORE", Math.floor((op - 0x3b) / 4), (op - 0x3b) % 4); p += 1; break;
         case op === 0x84: p += 3; break;
-        case op >= 0x99 && op <= 0xa8: refs.jumps++; p += 3; break;
-        case op === 0xc6 || op === 0xc7: refs.jumps++; p += 3; break;
+        case op >= 0x99 && op <= 0xa8: jump(op); p += 3; break;
+        case op === 0xc6 || op === 0xc7: jump(op); p += 3; break;
         case op === 0xa9: p += 2; break;
         case op === 0xaa: {
           let q = p + 1;
@@ -210,11 +232,12 @@ export class ClassReader {
           p = q + 8 + n * 8;
           break;
         }
-        case op >= 0xac && op <= 0xb1: refs.returns++; p += 1; break;
+        case op >= 0xac && op <= 0xb1: refs.returns++; refs.seq.push({ pc: p - base, kind: "RETURN", key: "" }); p += 1; break;
         case op >= 0xb2 && op <= 0xb5: {
           const r = this.ref(b.readUInt16BE(p + 1));
           const kind = (["GETSTATIC", "PUTSTATIC", "GETFIELD", "PUTFIELD"] as const)[op - 0xb2]!;
           addOnce(refs.fields, `f:${kind}${r.owner}.${r.name}`, { ...r, opcode: kind });
+          refs.seq.push({ pc: p - base, kind: "FIELD", key: `L${r.owner};${r.name}:${r.desc}`, opcode: kind });
           p += 3;
           break;
         }
@@ -222,6 +245,7 @@ export class ClassReader {
           const r = this.ref(b.readUInt16BE(p + 1));
           const kind = (["INVOKEVIRTUAL", "INVOKESPECIAL", "INVOKESTATIC", "INVOKEINTERFACE"] as const)[op - 0xb6]!;
           addOnce(refs.invokes, `i:${r.owner}.${r.name}${r.desc}`, { ...r, opcode: kind });
+          refs.seq.push({ pc: p - base, kind: "INVOKE", key: `L${r.owner};${r.name}${r.desc}`, opcode: kind });
           p += op === 0xb9 ? 5 : 3;
           break;
         }
@@ -229,6 +253,7 @@ export class ClassReader {
         case op === 0xbb: {
           const cls = this.className(b.readUInt16BE(p + 1))!;
           addOnce(refs.news, `n:${cls}`, cls);
+          refs.seq.push({ pc: p - base, kind: "NEW", key: cls });
           p += 3;
           break;
         }
@@ -240,9 +265,15 @@ export class ClassReader {
           p += 3;
           break;
         }
-        case op === 0xc4: p += b[p + 1] === 0x84 ? 6 : 4; break;
+        case op === 0xc4: {
+          const w = b[p + 1]!;
+          if (w >= 0x15 && w <= 0x19) local("LOAD", w - 0x15, b.readUInt16BE(p + 2));
+          else if (w >= 0x36 && w <= 0x3a) local("STORE", w - 0x36, b.readUInt16BE(p + 2));
+          p += w === 0x84 ? 6 : 4;
+          break;
+        }
         case op === 0xc5: p += 4; break;
-        case op === 0xc8 || op === 0xc9: refs.jumps++; p += 5; break;
+        case op === 0xc8 || op === 0xc9: jump(op); p += 5; break;
         default: p += 1;
       }
     }
@@ -250,7 +281,20 @@ export class ClassReader {
   }
 }
 
+export interface TypedConstant {
+  type: "int" | "long" | "float" | "double" | "string" | "class" | "null";
+  value: string;
+  pc: number;
+}
+
 export interface CodeRefs {
+  /** Every constant push in order (ICONST/BIPUSH/SIPUSH/LDC/ACONST_NULL…), for @At("CONSTANT") / @ModifyConstant. */
+  typedConstants: TypedConstant[];
+  /** Local variable loads/stores (type I/J/F/D/A = int-like, long, float, double, reference). */
+  locals: { kind: "LOAD" | "STORE"; type: "I" | "J" | "F" | "D" | "A"; index: number; pc: number }[];
+  jumpOps: { opcode: number; pc: number }[];
+  /** Instruction sequence of injection-relevant nodes, for @Slice ordering checks. */
+  seq: { pc: number; kind: "INVOKE" | "FIELD" | "NEW" | "CONSTANT" | "JUMP" | "LOAD" | "STORE" | "RETURN"; key: string; opcode?: string }[];
   invokes: { owner: string; name: string; desc: string; opcode: string }[];
   fields: { owner: string; name: string; desc: string; opcode: string }[];
   news: string[];
@@ -258,6 +302,16 @@ export interface CodeRefs {
   instanceofs: string[];
   returns: number;
   jumps: number;
+}
+
+/** Shortest decimal that round-trips through a 32-bit float (0.2f, not 0.20000000298023224). */
+function shortFloat(v: number): string {
+  if (!Number.isFinite(v)) return String(v);
+  for (let p = 1; p <= 9; p++) {
+    const s = String(Number(v.toPrecision(p)));
+    if (Math.fround(Number(s)) === Math.fround(v)) return s;
+  }
+  return String(v);
 }
 
 function decodeModifiedUtf8(buf: Buffer, start: number, len: number): string {
